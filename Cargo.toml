@@ -11,3 +11,4 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 toml = "0.8"
 dirs = "5.0"
 unicode-width = "0.1"
+arboard = "3.3"

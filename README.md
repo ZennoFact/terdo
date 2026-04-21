@@ -30,10 +30,11 @@
 
 ## setting.tomlで設定できる項目
 
-現在は色情報しか設定できません。->申し訳程度にペイン分割状態を保持するようにしました。
+ペイン分割状況，フィルター選択状況，色情報を設定できます。
 
 ```setting.toml
-split_view # ペイン分割の際に状態の変更を保持
+split_view # ペイン分割状況を保持
+filter_mode # フィルター選択時状況を保持
 [colors.selected_bg] # 選択中のタスクの背景色(RGB)
 [colors.selected_fg] # 選択中のタスクの文字色(RGB)
 [colors.inactive_selected_bg] # アクティブじゃない状態の背景色(RGB)

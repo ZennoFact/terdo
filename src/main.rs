@@ -1,5 +1,5 @@
 use crossterm::{
-    cursor, event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    cursor, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute, queue,
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
@@ -10,6 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use arboard::Clipboard;
 
 const TASKS_TITLE: &str = "TODO List";
 
@@ -563,6 +564,31 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
                 app.add_task();
             } else if app.input_mode == InputMode::Editing {
                 app.edit_task();
+            }
+        }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
+                // クリップボードからテキストを取得して貼り付け
+                if let Ok(mut clipboard) = Clipboard::new() {
+                    if let Ok(text) = clipboard.get_text() {
+                        // 前後の空白や改行を除去
+                        let trimmed_text = text.trim();
+                        // カーソル位置にテキストを挿入
+                        let chars: Vec<char> = app.input_buffer.chars().collect();
+                        let mut new_buffer = String::new();
+                        for (i, ch) in chars.iter().enumerate() {
+                            if i == app.cursor_position {
+                                new_buffer.push_str(trimmed_text);
+                            }
+                            new_buffer.push(*ch);
+                        }
+                        if app.cursor_position >= chars.len() {
+                            new_buffer.push_str(trimmed_text);
+                        }
+                        app.cursor_position += trimmed_text.chars().count();
+                        app.input_buffer = new_buffer;
+                    }
+                }
             }
         }
         KeyCode::Esc => {
