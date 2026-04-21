@@ -402,6 +402,24 @@ impl App {
             }
         }
     }
+
+    // フィルター表示用のテキストと色を取得
+    fn get_filter_display(&self) -> (&str, Color) {
+        match self.filter_mode {
+            FilterMode::Unfinished => ("unfinished", self.settings.colors.filter_unfinished_fg.to_crossterm_color()),
+            FilterMode::Completed => ("completed", self.settings.colors.filter_completed_fg.to_crossterm_color()),
+            FilterMode::All => ("all task", self.settings.colors.filter_all_fg.to_crossterm_color()),
+        }
+    }
+}
+
+// 空のビュー表示用の色を取得
+fn get_empty_view_color(is_active: bool, colors: &ColorScheme) -> Color {
+    if is_active {
+        colors.empty_view_fg.to_crossterm_color()
+    } else {
+        Color::DarkGrey
+    }
 }
 
 fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, Settings)> {
@@ -649,22 +667,15 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
     }
     
     // フィルター状態を右端に表示
-    let (filter_text, filter_color) = match app.filter_mode {
-        FilterMode::Unfinished => ("unfinished", colors.filter_unfinished_fg.to_crossterm_color()),
-        FilterMode::Completed => ("completed", colors.filter_completed_fg.to_crossterm_color()),
-        FilterMode::All => ("all task", colors.filter_all_fg.to_crossterm_color()),
-    };
+    let (filter_text, filter_color) = app.get_filter_display();
     let filter_pos = width.saturating_sub(filter_text.len() as u16 + if app.split_view { 2 } else { 1 });
     queue!(stdout, cursor::MoveTo(filter_pos, 0), SetForegroundColor(filter_color), Print(filter_text), ResetColor)?;
     
     // タスクリスト
     if current_tasks.is_empty() && app.current_parent.is_some() {
         // サブタスクビューで空の場合
-        let fg_color = if app.split_view && !is_split_and_active_left {
-            Color::DarkGrey
-        } else {
-            colors.empty_view_fg.to_crossterm_color()
-        };
+        let is_active = !(app.split_view && !is_split_and_active_left);
+        let fg_color = get_empty_view_color(is_active, colors);
         queue!(stdout, 
             cursor::MoveTo(0, 1),
             SetForegroundColor(fg_color),
@@ -673,11 +684,8 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
         )?;
     } else if current_tasks.is_empty() && app.current_parent.is_none() {
         // 親タスクが空の場合
-        let fg_color = if app.split_view && !is_split_and_active_left {
-            Color::DarkGrey
-        } else {
-            colors.empty_view_fg.to_crossterm_color()
-        };
+        let is_active = !(app.split_view && !is_split_and_active_left);
+        let fg_color = get_empty_view_color(is_active, colors);
         queue!(stdout, 
             cursor::MoveTo(0, 1),
             SetForegroundColor(fg_color),
@@ -769,11 +777,7 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
     queue!(stdout, cursor::MoveTo(split_x + 1, 0), SetForegroundColor(colors.title_fg.to_crossterm_color()), Print("Subtasks"), ResetColor)?;
     
     // フィルター状態を右ペインの右端に表示
-    let (filter_text, filter_color) = match app.filter_mode {
-        FilterMode::Unfinished => ("unfinished", colors.filter_unfinished_fg.to_crossterm_color()),
-        FilterMode::Completed => ("completed", colors.filter_completed_fg.to_crossterm_color()),
-        FilterMode::All => ("all task", colors.filter_all_fg.to_crossterm_color()),
-    };
+    let (filter_text, filter_color) = app.get_filter_display();
     let right_pane_width = width - split_x - 1;
     let filter_pos = split_x + 1 + right_pane_width.saturating_sub(filter_text.len() as u16 + 1);
     queue!(stdout, cursor::MoveTo(filter_pos, 0), SetForegroundColor(filter_color), Print(filter_text), ResetColor)?;
@@ -784,21 +788,14 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
         
         if subtasks.is_empty() {
             // サブタスクが空の場合
-            if app.active_pane == Pane::Right {
-                queue!(stdout, 
-                    cursor::MoveTo(split_x + 2, 1),
-                    SetForegroundColor(colors.empty_view_fg.to_crossterm_color()),
-                    Print("create (n)ew sub-task"),
-                    ResetColor
-                )?;
-            } else {
-                queue!(stdout, 
-                    cursor::MoveTo(split_x + 2, 1),
-                    SetForegroundColor(Color::DarkGrey),
-                    Print("create (n)ew sub-task"),
-                    ResetColor
-                )?;
-            }
+            let is_active = app.active_pane == Pane::Right;
+            let fg_color = get_empty_view_color(is_active, colors);
+            queue!(stdout, 
+                cursor::MoveTo(split_x + 2, 1),
+                SetForegroundColor(fg_color),
+                Print("create (n)ew sub-task"),
+                ResetColor
+            )?;
         } else {
             // サブタスクが存在する場合
             for (i, task) in subtasks.iter().enumerate().take(height as usize) {
@@ -831,21 +828,14 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
         }
     } else {
         // 親タスクが空の場合
-        if app.active_pane == Pane::Right {
-            queue!(stdout, 
-                cursor::MoveTo(split_x + 2, 1),
-                SetForegroundColor(colors.empty_view_fg.to_crossterm_color()),
-                Print("select task on left pane"),
-                ResetColor
-            )?;
-        } else {
-            queue!(stdout, 
-                cursor::MoveTo(split_x + 2, 1),
-                SetForegroundColor(Color::DarkGrey),
-                Print("select task on left pane"),
-                ResetColor
-            )?;
-        }
+        let is_active = app.active_pane == Pane::Right;
+        let fg_color = get_empty_view_color(is_active, colors);
+        queue!(stdout, 
+            cursor::MoveTo(split_x + 2, 1),
+            SetForegroundColor(fg_color),
+            Print("select task on left pane"),
+            ResetColor
+        )?;
     }
     
     Ok(())
