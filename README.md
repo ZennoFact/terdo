@@ -1,7 +1,7 @@
 # TerDO -Terminal ToDO-
 
 コマンドプロンプト（Windowsターミナル）上で動くTODOアプリケーション。
-現在，Windows11以外のことはできていません。
+現在，Windows11以外のことは考えずに作成しています。
 
 ## 使用言語
 
