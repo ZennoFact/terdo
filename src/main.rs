@@ -735,6 +735,30 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
 
 fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     match key.code {
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // 選択中のタスク名をクリップボードにコピー
+            if app.split_view && app.active_pane == Pane::Right {
+                // 右ペイン（サブタスク）の場合
+                if let Some(parent_id) = &app.current_parent {
+                    let subtasks = app.get_filtered_subtasks(parent_id);
+                    if !subtasks.is_empty() && app.right_pane_selected_index < subtasks.len() {
+                        let task_title = &subtasks[app.right_pane_selected_index].title;
+                        if let Ok(mut clipboard) = Clipboard::new() {
+                            let _ = clipboard.set_text(task_title.clone());
+                        }
+                    }
+                }
+            } else {
+                // 左ペインまたは通常モードの場合
+                let current_tasks = app.get_current_tasks();
+                if !current_tasks.is_empty() && app.selected_index < current_tasks.len() {
+                    let task_title = &current_tasks[app.selected_index].title;
+                    if let Ok(mut clipboard) = Clipboard::new() {
+                        let _ = clipboard.set_text(task_title.clone());
+                    }
+                }
+            }
+        }
         KeyCode::Char('q') => return Ok(true),
         KeyCode::Char('a') => {
             app.filter_mode = FilterMode::All;
@@ -1084,6 +1108,7 @@ fn draw_help_full<W: Write>(app: &App, stdout: &mut W, _width: u16, height: u16)
         "  | - split: 画面分割の切り替えON/OFF",
         "  SPACE - toggle complete: タスクの完了状態を切り替え",
         "  ESC - close manual: マニュアルを閉じる",
+        "  Ctrl + C - copy: 選択中のタスクタイトルをクリップボードにコピー",
         "",
     ];
     
@@ -1137,6 +1162,7 @@ fn draw_help_pane<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) 
         "  | - 画面分割の切り替えON/OFF",
         "  SPACE - タスクの完了状態を切り替え",
         "  ESC - マニュアルを閉じる",
+        "  Ctrl + C - 選択中のタスクタイトルをコピー",
         "",
     ];
     
