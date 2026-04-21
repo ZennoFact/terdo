@@ -65,6 +65,7 @@ impl Default for ColorScheme {
 struct Settings {
     colors: ColorScheme,
     split_view: bool,
+    filter_mode: FilterMode,
 }
 
 impl Default for Settings {
@@ -72,6 +73,7 @@ impl Default for Settings {
         Self {
             colors: ColorScheme::default(),
             split_view: false,
+            filter_mode: FilterMode::All,
         }
     }
 }
@@ -122,7 +124,7 @@ enum InputMode {
     Help,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 enum FilterMode {
     Unfinished,
     Completed,
@@ -140,6 +142,7 @@ impl App {
         let (tasks_path, settings_path, settings) = initialize_config_dir()?;
         let tasks = load_tasks(&tasks_path)?;
         let split_view = settings.split_view;
+        let filter_mode = settings.filter_mode;
         Ok(Self {
             tasks,
             selected_index: 0,
@@ -150,7 +153,7 @@ impl App {
             cursor_position: 0,
             editing_task_id: None,
             deleting_task_id: None,
-            filter_mode: FilterMode::Unfinished,
+            filter_mode,
             split_view,
             active_pane: Pane::Left,
             settings,
@@ -422,7 +425,7 @@ impl App {
         match self.filter_mode {
             FilterMode::Unfinished => ("unfinished", self.settings.colors.filter_unfinished_fg.to_crossterm_color()),
             FilterMode::Completed => ("completed", self.settings.colors.filter_completed_fg.to_crossterm_color()),
-            FilterMode::All => ("all task", self.settings.colors.filter_all_fg.to_crossterm_color()),
+            FilterMode::All => ("all tasks", self.settings.colors.filter_all_fg.to_crossterm_color()),
         }
     }
 }
@@ -709,27 +712,33 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         KeyCode::Char('q') => return Ok(true),
         KeyCode::Char('a') => {
             app.filter_mode = FilterMode::All;
+            app.settings.filter_mode = FilterMode::All;
             if app.split_view && app.active_pane == Pane::Right {
                 app.right_pane_selected_index = 0;
             } else {
                 app.selected_index = 0;
             }
+            let _ = save_settings(&app.settings, &app.settings_path);
         }
         KeyCode::Char('u') => {
             app.filter_mode = FilterMode::Unfinished;
+            app.settings.filter_mode = FilterMode::Unfinished;
             if app.split_view && app.active_pane == Pane::Right {
                 app.right_pane_selected_index = 0;
             } else {
                 app.selected_index = 0;
             }
+            let _ = save_settings(&app.settings, &app.settings_path);
         }
         KeyCode::Char('c') => {
             app.filter_mode = FilterMode::Completed;
+            app.settings.filter_mode = FilterMode::Completed;
             if app.split_view && app.active_pane == Pane::Right {
                 app.right_pane_selected_index = 0;
             } else {
                 app.selected_index = 0;
             }
+            let _ = save_settings(&app.settings, &app.settings_path);
         }
         KeyCode::Char('n') => {
             app.input_buffer.clear();
