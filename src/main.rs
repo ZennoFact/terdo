@@ -102,6 +102,7 @@ struct App {
     current_parent: Option<String>,
     input_mode: InputMode,
     input_buffer: String,
+    cursor_position: usize,
     editing_task_id: Option<String>,
     deleting_task_id: Option<String>,
     filter_mode: FilterMode,
@@ -146,6 +147,7 @@ impl App {
             current_parent: None,
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
+            cursor_position: 0,
             editing_task_id: None,
             deleting_task_id: None,
             filter_mode: FilterMode::Unfinished,
@@ -217,6 +219,7 @@ impl App {
             let _ = save_tasks(&self.tasks, &self.tasks_path);
         }
         self.input_buffer.clear();
+        self.cursor_position = 0;
         self.input_mode = InputMode::Normal;
     }
 
@@ -230,6 +233,7 @@ impl App {
             }
         }
         self.input_buffer.clear();
+        self.cursor_position = 0;
         self.editing_task_id = None;
         self.input_mode = InputMode::Normal;
     }
@@ -245,7 +249,8 @@ impl App {
                     let task_title = subtasks[self.right_pane_selected_index].title.clone();
                     
                     self.editing_task_id = Some(task_id);
-                    self.input_buffer = task_title;
+                    self.input_buffer = task_title.clone();
+                    self.cursor_position = task_title.chars().count();
                     self.input_mode = InputMode::Editing;
                 }
             }
@@ -257,7 +262,8 @@ impl App {
                 drop(current_tasks); // 参照を解放
                 
                 self.editing_task_id = Some(task_id);
-                self.input_buffer = task_title;
+                self.input_buffer = task_title.clone();
+                self.cursor_position = task_title.chars().count();
                 self.input_mode = InputMode::Editing;
             }
         }
@@ -558,6 +564,7 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Esc => {
             app.input_buffer.clear();
+            app.cursor_position = 0;
             app.editing_task_id = None;
             app.deleting_task_id = None;
             app.input_mode = InputMode::Normal;
@@ -584,7 +591,20 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char(c) => {
             if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
-                app.input_buffer.push(c);
+                // カーソル位置に文字を挿入
+                let chars: Vec<char> = app.input_buffer.chars().collect();
+                let mut new_buffer = String::new();
+                for (i, ch) in chars.iter().enumerate() {
+                    if i == app.cursor_position {
+                        new_buffer.push(c);
+                    }
+                    new_buffer.push(*ch);
+                }
+                if app.cursor_position >= chars.len() {
+                    new_buffer.push(c);
+                }
+                app.input_buffer = new_buffer;
+                app.cursor_position += 1;
             } else if app.input_mode == InputMode::Deleting {
                 // 削除モードでy/n以外の文字が入力されたらキャンセル
                 app.cancel_delete();
@@ -592,7 +612,42 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Backspace => {
             if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
-                app.input_buffer.pop();
+                if app.cursor_position > 0 {
+                    let chars: Vec<char> = app.input_buffer.chars().collect();
+                    let mut new_buffer = String::new();
+                    for (i, ch) in chars.iter().enumerate() {
+                        if i != app.cursor_position - 1 {
+                            new_buffer.push(*ch);
+                        }
+                    }
+                    app.input_buffer = new_buffer;
+                    app.cursor_position -= 1;
+                }
+            }
+        }
+        KeyCode::Left => {
+            if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
+                if app.cursor_position > 0 {
+                    app.cursor_position -= 1;
+                }
+            }
+        }
+        KeyCode::Right => {
+            if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
+                let char_count = app.input_buffer.chars().count();
+                if app.cursor_position < char_count {
+                    app.cursor_position += 1;
+                }
+            }
+        }
+        KeyCode::Home => {
+            if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
+                app.cursor_position = 0;
+            }
+        }
+        KeyCode::End => {
+            if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
+                app.cursor_position = app.input_buffer.chars().count();
             }
         }
         _ => {
@@ -623,6 +678,8 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             app.selected_index = 0;
         }
         KeyCode::Char('n') => {
+            app.input_buffer.clear();
+            app.cursor_position = 0;
             app.input_mode = InputMode::Adding;
         }
         KeyCode::Char('e') => {
@@ -1152,6 +1209,15 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             cursor::MoveTo(0, help_y + 1),
             Print(&truncated_input)
         )?;
+        
+        // カーソル位置を設定
+        let cursor_x = {
+            let prefix_width = "> ".width();
+            let chars: Vec<char> = app.input_buffer.chars().collect();
+            let before_cursor: String = chars.iter().take(app.cursor_position).collect();
+            prefix_width + before_cursor.width()
+        };
+        queue!(stdout, cursor::MoveTo(cursor_x as u16, help_y + 1))?;
     } else if app.input_mode == InputMode::Editing {
         // 入力バッファを画面幅に合わせて切り詰める
         let input_display = format!("> {}", app.input_buffer);
@@ -1183,6 +1249,15 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             cursor::MoveTo(0, help_y + 1),
             Print(&truncated_input)
         )?;
+        
+        // カーソル位置を設定
+        let cursor_x = {
+            let prefix_width = "> ".width();
+            let chars: Vec<char> = app.input_buffer.chars().collect();
+            let before_cursor: String = chars.iter().take(app.cursor_position).collect();
+            prefix_width + before_cursor.width()
+        };
+        queue!(stdout, cursor::MoveTo(cursor_x as u16, help_y + 1))?;
     } else if app.input_mode == InputMode::Deleting {
         if let Some(task_id) = &app.deleting_task_id {
             if let Some(task) = app.tasks.iter().find(|t| t.id == *task_id) {
