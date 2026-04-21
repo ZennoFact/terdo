@@ -709,15 +709,27 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         KeyCode::Char('q') => return Ok(true),
         KeyCode::Char('a') => {
             app.filter_mode = FilterMode::All;
-            app.selected_index = 0;
+            if app.split_view && app.active_pane == Pane::Right {
+                app.right_pane_selected_index = 0;
+            } else {
+                app.selected_index = 0;
+            }
         }
         KeyCode::Char('u') => {
             app.filter_mode = FilterMode::Unfinished;
-            app.selected_index = 0;
+            if app.split_view && app.active_pane == Pane::Right {
+                app.right_pane_selected_index = 0;
+            } else {
+                app.selected_index = 0;
+            }
         }
         KeyCode::Char('c') => {
             app.filter_mode = FilterMode::Completed;
-            app.selected_index = 0;
+            if app.split_view && app.active_pane == Pane::Right {
+                app.right_pane_selected_index = 0;
+            } else {
+                app.selected_index = 0;
+            }
         }
         KeyCode::Char('n') => {
             app.input_buffer.clear();
@@ -748,6 +760,32 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         KeyCode::Char('|') => {
             app.split_view = !app.split_view;
             app.settings.split_view = app.split_view;
+            
+            // ペイン分割をONにした場合の処理
+            if app.split_view {
+                // サブタスクビューにいる場合は親タスクリストに戻す
+                if app.current_parent.is_some() {
+                    app.current_parent = None;
+                    app.selected_index = 0;
+                    app.active_pane = Pane::Right;
+                    app.right_pane_selected_index = 0;
+                } else {
+                    app.active_pane = Pane::Left;
+                    app.right_pane_selected_index = 0;
+                }
+            } else {
+                // ペイン分割をOFFにした場合、右ペインがアクティブならサブタスクに入る
+                if app.active_pane == Pane::Right {
+                    let current_tasks = app.get_current_tasks();
+                    if !current_tasks.is_empty() && app.selected_index < current_tasks.len() {
+                        let task_id = current_tasks[app.selected_index].id.clone();
+                        app.current_parent = Some(task_id);
+                        app.selected_index = app.right_pane_selected_index;
+                    }
+                }
+                app.active_pane = Pane::Left;
+            }
+            
             let _ = save_settings(&app.settings, &app.settings_path);
         }
         KeyCode::Char('m') => {
