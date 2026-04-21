@@ -33,15 +33,16 @@
 現在は色情報しか設定できません。
 
 ```setting.toml
-[colors.selected_bg] # 選択中のタスクの背景色
-[colors.selected_fg] # 選択中のタスクの文字色
-[colors.inactive_selected_bg] # アクティブじゃない状態の背景色
-[colors.inactive_selected_fg] # アクティブじゃない状態の文字色
-[colors.delete_bg] # タスクの削除時の背景色
-[colors.delete_fg] # タスクの削除時の文字色
-[colors.title_fg] # タイトルの文字色
-[colors.filter_all_fg] # 全選択モード用ステータス文字色
-[colors.filter_completed_fg] # 完了済み表示モード用ステータス文字色
-[colors.filter_unfinished_fg] # 未完了表示モード用ステータス文字色
-[colors.empty_view_fg] # タスクがないときに表示するメッセージ文字色
+split_view # ペイン分割の際に状態の変更を保持
+[colors.selected_bg] # 選択中のタスクの背景色(RGB)
+[colors.selected_fg] # 選択中のタスクの文字色(RGB)
+[colors.inactive_selected_bg] # アクティブじゃない状態の背景色(RGB)
+[colors.inactive_selected_fg] # アクティブじゃない状態の文字色(RGB)
+[colors.delete_bg] # タスクの削除時の背景色(RGB)
+[colors.delete_fg] # タスクの削除時の文字色(RGB)
+[colors.title_fg] # タイトルの文字色(RGB)
+[colors.filter_all_fg] # 全選択モード用ステータス文字色(RGB)
+[colors.filter_completed_fg] # 完了済み表示モード用ステータス文字色(RGB)
+[colors.filter_unfinished_fg] # 未完了表示モード用ステータス文字色(RGB)
+[colors.empty_view_fg] # タスクがないときに表示するメッセージ文字色(RGB)
 ```

@@ -60,14 +60,17 @@ impl Default for ColorScheme {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 struct Settings {
     colors: ColorScheme,
+    split_view: bool,
 }
 
-impl Settings {
+impl Default for Settings {
     fn default() -> Self {
         Self {
             colors: ColorScheme::default(),
+            split_view: false,
         }
     }
 }
@@ -105,6 +108,7 @@ struct App {
     active_pane: Pane,
     settings: Settings,
     tasks_path: PathBuf,
+    settings_path: PathBuf,
 }
 
 #[derive(PartialEq)]
@@ -130,8 +134,9 @@ enum Pane {
 
 impl App {
     fn new() -> io::Result<Self> {
-        let (tasks_path, _settings_path, settings) = initialize_config_dir()?;
+        let (tasks_path, settings_path, settings) = initialize_config_dir()?;
         let tasks = load_tasks(&tasks_path)?;
+        let split_view = settings.split_view;
         Ok(Self {
             tasks,
             selected_index: 0,
@@ -142,10 +147,11 @@ impl App {
             editing_task_id: None,
             deleting_task_id: None,
             filter_mode: FilterMode::Unfinished,
-            split_view: false,
+            split_view,
             active_pane: Pane::Left,
             settings,
             tasks_path,
+            settings_path,
         })
     }
 
@@ -495,6 +501,13 @@ fn save_tasks(tasks: &[Task], path: &PathBuf) -> io::Result<()> {
     Ok(())
 }
 
+fn save_settings(settings: &Settings, path: &PathBuf) -> io::Result<()> {
+    let toml_string = toml::to_string_pretty(settings)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    fs::write(path, toml_string)?;
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     let mut app = App::new()?;
     
@@ -624,6 +637,8 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         }
         KeyCode::Char('|') => {
             app.split_view = !app.split_view;
+            app.settings.split_view = app.split_view;
+            let _ = save_settings(&app.settings, &app.settings_path);
         }
         _ => {}
     }
