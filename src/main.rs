@@ -810,7 +810,12 @@ fn draw_split_view<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16)
     
     // 区切り線
     for y in 0..=height {
-        queue!(stdout, cursor::MoveTo(split_x, y), Print("|"))?;
+        queue!(stdout, 
+            cursor::MoveTo(split_x, y), 
+            SetForegroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+            Print("│"),
+            ResetColor
+        )?;
     }
     
     // 右ペイン（サブタスク）
