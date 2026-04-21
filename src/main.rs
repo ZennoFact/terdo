@@ -724,8 +724,11 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                 app.has_completed_subtasks(&task.id);
             
             let display = format!("{}{} {}{}", prefix, status, task.title, subtask_indicator);
-            let truncated = if app.split_view && display.len() > width as usize - 2 {
-                &display[..width as usize - 2]
+            // 文字境界を考慮した安全なトランケート処理
+            let truncated_str;
+            let truncated = if app.split_view && display.chars().count() > width as usize - 2 {
+                truncated_str = display.chars().take(width as usize - 2).collect::<String>();
+                &truncated_str
             } else {
                 &display
             };
