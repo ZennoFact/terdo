@@ -1144,7 +1144,13 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
     let colors = &app.settings.colors;
     
     // 右ペイン（サブタスク）
-    queue!(stdout, cursor::MoveTo(split_x + 1, 0), SetForegroundColor(colors.title_fg.to_crossterm_color()), Print("Subtasks"), ResetColor)?;
+    let title = if !parent_tasks.is_empty() && app.selected_index < parent_tasks.len() {
+        let parent_title = &parent_tasks[app.selected_index].title;
+        format!("Sub-task List @{}", parent_title)
+    } else {
+        "Subtasks".to_string()
+    };
+    queue!(stdout, cursor::MoveTo(split_x + 1, 0), SetForegroundColor(colors.title_fg.to_crossterm_color()), Print(&title), ResetColor)?;
     
     // フィルター状態を右ペインの右端に表示
     let (filter_text, filter_color) = app.get_filter_display();
@@ -1252,11 +1258,23 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
     
     if app.input_mode == InputMode::Adding {
         let task_type = if app.split_view && app.active_pane == Pane::Right {
-            "New Sub-task"
-        } else if app.current_parent.is_some() {
-            "New Sub-task"
+            // 右ペインでサブタスク作成
+            let parent_tasks = app.get_current_tasks();
+            if !parent_tasks.is_empty() && app.selected_index < parent_tasks.len() {
+                let parent_title = &parent_tasks[app.selected_index].title;
+                format!("New Sub-task @{}", parent_title)
+            } else {
+                "New Sub-task".to_string()
+            }
+        } else if let Some(parent_id) = &app.current_parent {
+            // 非分割モードでサブタスク作成
+            if let Some(parent) = app.tasks.iter().find(|t| t.id == *parent_id) {
+                format!("New Sub-task @{}", parent.title)
+            } else {
+                "New Sub-task".to_string()
+            }
         } else {
-            "New Task"
+            "New Task".to_string()
         };
         let message = format!("{} [Enter: Save, Esc: Cancel]", task_type);
         let padding_len = (width as usize).saturating_sub(message.len());
