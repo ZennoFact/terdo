@@ -9,6 +9,7 @@ use std::io::{self, Write};
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const TASKS_TITLE: &str = "TODO List";
 
@@ -645,6 +646,38 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     Ok(false)
 }
 
+// テキストを指定幅で折り返す（表示幅を考慮）
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0;
+    
+    for ch in text.chars() {
+        let char_width = ch.width().unwrap_or(0);
+        
+        if current_width + char_width > max_width && !current_line.is_empty() {
+            // 現在の行を保存して新しい行を開始
+            lines.push(current_line.clone());
+            current_line.clear();
+            current_width = 0;
+        }
+        
+        current_line.push(ch);
+        current_width += char_width;
+    }
+    
+    // 最後の行を追加
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+    
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    
+    lines
+}
+
 fn draw<W: Write>(app: &App, stdout: &mut W) -> io::Result<()> {
     execute!(stdout, terminal::Clear(ClearType::All))?;
     
@@ -708,8 +741,12 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
             ResetColor
         )?;
     } else {
-        for (i, task) in current_tasks.iter().enumerate().take(height as usize) {
-            queue!(stdout, cursor::MoveTo(0, i as u16 + 1))?;
+        let mut current_line = 0u16;  // 現在の描画行
+        
+        for (i, task) in current_tasks.iter().enumerate() {
+            if current_line >= height {
+                break;  // 画面に収まらない場合は終了
+            }
             
             let selected = i == app.selected_index;
             let prefix = if selected { "> " } else { "  " };
@@ -724,49 +761,73 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                 app.has_completed_subtasks(&task.id);
             
             let display = format!("{}{} {}{}", prefix, status, task.title, subtask_indicator);
-            // 文字境界を考慮した安全なトランケート処理
-            let truncated_str;
-            let truncated = if app.split_view && display.chars().count() > width as usize - 2 {
-                truncated_str = display.chars().take(width as usize - 2).collect::<String>();
-                &truncated_str
-            } else {
-                &display
+            
+            // 折り返し処理
+            let max_width = if app.split_view { 
+                (width as usize).saturating_sub(2) 
+            } else { 
+                width as usize 
             };
             
-            if selected && !is_split_and_active_right {
-                let padding = if app.split_view {
-                    " ".repeat((width as usize - 1).saturating_sub(truncated.len()))
-                } else {
-                    " ".repeat((width as usize).saturating_sub(display.len()))
-                };
-                queue!(stdout, 
-                    SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
-                    SetForegroundColor(colors.selected_fg.to_crossterm_color()),
-                    Print(format!("{}{}", if app.split_view { truncated } else { &display }, padding)),
-                    ResetColor
-                )?;
-            } else if selected && is_split_and_active_right {
-                let padding = " ".repeat((width as usize - 1).saturating_sub(truncated.len()));
-                queue!(stdout, 
-                    SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
-                    SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
-                    Print(format!("{}{}", truncated, padding)),
-                    ResetColor
-                )?;
-            } else if is_parent_with_completed_subtasks {
-                // 完了済みサブタスクを持つ未完了の親タスクはグレー
-                queue!(stdout, 
-                    SetForegroundColor(Color::DarkGrey),
-                    Print(if app.split_view { truncated } else { &display }),
-                    ResetColor
-                )?;
+            let wrapped_lines = if display.width() > max_width {
+                wrap_text(&display, max_width)
             } else {
-                // 通常表示（白色）
-                queue!(stdout, 
-                    SetForegroundColor(Color::White),
-                    Print(if app.split_view { truncated } else { &display }),
-                    ResetColor
-                )?;
+                vec![display.clone()]
+            };
+            
+            // 各行を描画
+            for (line_idx, line) in wrapped_lines.iter().enumerate() {
+                if current_line >= height {
+                    break;
+                }
+                
+                queue!(stdout, cursor::MoveTo(0, current_line + 1))?;
+                
+                let is_first_line = line_idx == 0;
+                let display_text = if is_first_line {
+                    line.clone()
+                } else {
+                    // 2行目以降はインデント
+                    format!("    {}", line)
+                };
+                
+                if selected && !is_split_and_active_right {
+                    let padding = if app.split_view {
+                        " ".repeat(max_width.saturating_sub(display_text.width()))
+                    } else {
+                        " ".repeat((width as usize).saturating_sub(display_text.width()))
+                    };
+                    queue!(stdout, 
+                        SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                        SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                        Print(format!("{}{}", display_text, padding)),
+                        ResetColor
+                    )?;
+                } else if selected && is_split_and_active_right {
+                    let padding = " ".repeat(max_width.saturating_sub(display_text.width()));
+                    queue!(stdout, 
+                        SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+                        SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
+                        Print(format!("{}{}", display_text, padding)),
+                        ResetColor
+                    )?;
+                } else if is_parent_with_completed_subtasks {
+                    // 完了済みサブタスクを持つ未完了の親タスクはグレー
+                    queue!(stdout, 
+                        SetForegroundColor(Color::DarkGrey),
+                        Print(&display_text),
+                        ResetColor
+                    )?;
+                } else {
+                    // 通常表示（白色）
+                    queue!(stdout, 
+                        SetForegroundColor(Color::White),
+                        Print(&display_text),
+                        ResetColor
+                    )?;
+                }
+                
+                current_line += 1;
             }
         }
     }
@@ -816,8 +877,13 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
             )?;
         } else {
             // サブタスクが存在する場合
-            for (i, task) in subtasks.iter().enumerate().take(height as usize) {
-                queue!(stdout, cursor::MoveTo(split_x + 2, i as u16 + 1))?;
+            let mut current_line = 0u16;
+            let right_pane_width = width - split_x - 2;
+            
+            for (i, task) in subtasks.iter().enumerate() {
+                if current_line >= height {
+                    break;
+                }
                 
                 let selected = app.active_pane == Pane::Right && i == app.right_pane_selected_index;
                 let prefix = if i == app.right_pane_selected_index { "> " } else { "  " };
@@ -825,22 +891,48 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
                 
                 let display = format!("{}{} {}", prefix, status, task.title);
                 
-                if selected {
-                    let right_pane_width = width - split_x - 2;
-                    let padding = " ".repeat((right_pane_width as usize).saturating_sub(display.len()));
-                    queue!(stdout,
-                        SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
-                        SetForegroundColor(colors.selected_fg.to_crossterm_color()),
-                        Print(format!("{}{}", display, padding)),
-                        ResetColor
-                    )?;
+                // 折り返し処理
+                let max_width = right_pane_width as usize;
+                let wrapped_lines = if display.width() > max_width {
+                    wrap_text(&display, max_width)
                 } else {
-                    // 通常表示（白色）
-                    queue!(stdout, 
-                        SetForegroundColor(Color::White),
-                        Print(display),
-                        ResetColor
-                    )?;
+                    vec![display.clone()]
+                };
+                
+                // 各行を描画
+                for (line_idx, line) in wrapped_lines.iter().enumerate() {
+                    if current_line >= height {
+                        break;
+                    }
+                    
+                    queue!(stdout, cursor::MoveTo(split_x + 2, current_line + 1))?;
+                    
+                    let is_first_line = line_idx == 0;
+                    let display_text = if is_first_line {
+                        line.clone()
+                    } else {
+                        // 2行目以降はインデント
+                        format!("    {}", line)
+                    };
+                    
+                    if selected {
+                        let padding = " ".repeat(max_width.saturating_sub(display_text.width()));
+                        queue!(stdout,
+                            SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", display_text, padding)),
+                            ResetColor
+                        )?;
+                    } else {
+                        // 通常表示（白色）
+                        queue!(stdout, 
+                            SetForegroundColor(Color::White),
+                            Print(&display_text),
+                            ResetColor
+                        )?;
+                    }
+                    
+                    current_line += 1;
                 }
             }
         }
