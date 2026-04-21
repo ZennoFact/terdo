@@ -118,6 +118,7 @@ enum InputMode {
     Adding,
     Editing,
     Deleting,
+    Help,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -561,6 +562,12 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
             app.deleting_task_id = None;
             app.input_mode = InputMode::Normal;
         }
+        KeyCode::Char('m') => {
+            // ヘルプモードの場合は終了
+            if app.input_mode == InputMode::Help {
+                app.input_mode = InputMode::Normal;
+            }
+        }
         KeyCode::Char(c @ ('y' | 'Y')) => {
             if app.input_mode == InputMode::Deleting {
                 app.confirm_delete();
@@ -576,15 +583,15 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Char(c) => {
-            if app.input_mode != InputMode::Deleting {
+            if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
                 app.input_buffer.push(c);
-            } else {
+            } else if app.input_mode == InputMode::Deleting {
                 // 削除モードでy/n以外の文字が入力されたらキャンセル
                 app.cancel_delete();
             }
         }
         KeyCode::Backspace => {
-            if app.input_mode != InputMode::Deleting {
+            if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
                 app.input_buffer.pop();
             }
         }
@@ -592,6 +599,9 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
             if app.input_mode == InputMode::Deleting {
                 // その他のキーでもキャンセル
                 app.cancel_delete();
+            } else if app.input_mode == InputMode::Help {
+                // ヘルプモード時はその他のキーで終了
+                app.input_mode = InputMode::Normal;
             }
         }
     }
@@ -641,6 +651,9 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             app.settings.split_view = app.split_view;
             let _ = save_settings(&app.settings, &app.settings_path);
         }
+        KeyCode::Char('m') => {
+            app.input_mode = InputMode::Help;
+        }
         _ => {}
     }
     Ok(false)
@@ -684,11 +697,28 @@ fn draw<W: Write>(app: &App, stdout: &mut W) -> io::Result<()> {
     let (width, height) = terminal::size()?;
     let content_height = height.saturating_sub(2);
     
-    draw_parent_tasks(app, stdout, if app.split_view { width / 2 } else { width }, content_height)?;
-    
-    if app.split_view {
-        draw_split_divider(stdout, width / 2, content_height, &app.settings.colors)?;
-        draw_subtasks(app, stdout, width, content_height)?;
+    if app.input_mode == InputMode::Help && !app.split_view {
+        // ヘルプモードかつ非分割時：全画面でヘルプを表示
+        draw_help_full(app, stdout, width, height)?;
+    } else if app.input_mode == InputMode::Help && app.split_view {
+        // ヘルプモードかつ分割時：アクティブペインにタスク、非アクティブペインにヘルプ
+        if app.active_pane == Pane::Left {
+            draw_parent_tasks(app, stdout, width / 2, content_height)?;
+            draw_split_divider(stdout, width / 2, content_height, &app.settings.colors)?;
+            draw_help_pane(app, stdout, width, content_height)?;
+        } else {
+            draw_help_pane(app, stdout, width / 2, content_height)?;
+            draw_split_divider(stdout, width / 2, content_height, &app.settings.colors)?;
+            draw_subtasks(app, stdout, width, content_height)?;
+        }
+    } else {
+        // 通常モード
+        draw_parent_tasks(app, stdout, if app.split_view { width / 2 } else { width }, content_height)?;
+        
+        if app.split_view {
+            draw_split_divider(stdout, width / 2, content_height, &app.settings.colors)?;
+            draw_subtasks(app, stdout, width, content_height)?;
+        }
     }
     
     // ヘルプまたは入力エリアを描画
@@ -847,6 +877,128 @@ fn draw_split_divider<W: Write>(stdout: &mut W, split_x: u16, height: u16, color
     Ok(())
 }
 
+fn draw_help_full<W: Write>(app: &App, stdout: &mut W, _width: u16, height: u16) -> io::Result<()> {
+    let colors = &app.settings.colors;
+    
+    // タイトル
+    queue!(stdout, 
+        cursor::MoveTo(0, 0),
+        SetForegroundColor(colors.title_fg.to_crossterm_color()),
+        Print("Manual"),
+        ResetColor
+    )?;
+    
+    // ヘルプ内容（プレースホルダー）
+    let help_lines = vec![
+        "",
+        "Manual: TerDO の使い方",
+        "",
+        "キー - 対応する動作",
+        "  A - 全てのタスクを表示",
+        "  C - 完了済みタスクを表示",
+        "  D - タスクの削除",
+        "  E - タスクの編集",
+        "  F - タスクの検索（未実装）",
+        "  H, ←, BACKSPACE - 親タスクに戻る",
+        "  J, ↓ - タスクを下に移動",
+        "  K, ↑ - タスクを上に移動",
+        "  L, →, ENTER - サブタスクに移動",
+        "  M - ヘルプを表示・非表示",
+        "  N - タスクの作成",
+        "  Q - アプリケーションを終了",
+        "  R - タスクのリストを更新",
+        "  S - タスクの並び替え",
+        "  T - タスクの完了状態を切り替え",
+        "  | - 画面分割の切り替えON/OFF",
+        "  SPACE - タスクの完了状態を切り替え",
+        "",
+    ];
+    
+    for (i, line) in help_lines.iter().enumerate() {
+        if i + 1 >= height as usize {
+            break;
+        }
+        queue!(stdout,
+            cursor::MoveTo(2, (i + 1) as u16),
+            Print(line)
+        )?;
+    }
+    
+    Ok(())
+}
+
+fn draw_help_pane<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -> io::Result<()> {
+    let colors = &app.settings.colors;
+    let split_x = if app.active_pane == Pane::Left { width / 2 } else { 0 };
+    let pane_width = width / 2;
+    
+    // タイトル
+    queue!(stdout, 
+        cursor::MoveTo(split_x + 1, 0),
+        SetForegroundColor(colors.title_fg.to_crossterm_color()),
+        Print("Manual"),
+        ResetColor
+    )?;
+    
+    // ヘルプ内容（プレースホルダー）
+    let help_lines = vec![
+        "",
+        "Manual: TerDO の使い方",
+        "",
+        "キー - 対応する動作",
+        "  A - all: 全てのタスクを表示",
+        "  C - completed: 完了済みタスクを表示",
+        "  D - delete: タスクの削除",
+        "  E - edit: タスクの編集",
+        "  F - find: タスクの検索（未実装）",
+        "  H, ←, BACKSPACE - back/left: 親タスクに戻る / 左ペインをアクティブ",
+        "  J, ↓ - down: タスクを下に移動",
+        "  K, ↑ - up: タスクを上に移動",
+        "  L, →, ENTER - right: サブタスクに移動 / 右ペインをアクティブ",
+        "  M - manual: ヘルプを表示・非表示",
+        "  N - new: タスクの作成",
+        "  Q - quit: アプリケーションを終了",
+        "  R - refresh: タスクのリストを更新",
+        "  S - sort: タスクの並び替え",
+        "  T - toggle: タスクの完了状態を切り替え",
+        "  | - split: 画面分割の切り替えON/OFF",
+        "  SPACE - toggle complete: タスクの完了状態を切り替え",
+        "",
+    ];
+    
+    for (i, line) in help_lines.iter().enumerate() {
+        if i + 1 >= height as usize {
+            break;
+        }
+        
+        // ペイン幅を考慮して切り詰め
+        let max_width = pane_width.saturating_sub(3) as usize;
+        let truncated = if line.width() > max_width {
+            let mut current_width = 0;
+            let mut truncated_line = String::new();
+            
+            for ch in line.chars() {
+                let char_width = ch.width().unwrap_or(0);
+                if current_width + char_width > max_width {
+                    break;
+                }
+                truncated_line.push(ch);
+                current_width += char_width;
+            }
+            truncated_line
+        } else {
+            line.to_string()
+        };
+        
+        queue!(stdout,
+            cursor::MoveTo(split_x + 2, (i + 1) as u16),
+            Print(&truncated)
+        )?;
+    }
+    
+    Ok(())
+}
+
 fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -> io::Result<()> {
     let split_x = width / 2;
     let parent_tasks = app.get_current_tasks();
@@ -969,6 +1121,27 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
         };
         let message = format!("{} [Enter: Save, Esc: Cancel]", task_type);
         let padding_len = (width as usize).saturating_sub(message.len());
+        
+        // 入力バッファを画面幅に合わせて切り詰める
+        let input_display = format!("> {}", app.input_buffer);
+        let max_input_width = width as usize;
+        let truncated_input = if input_display.width() > max_input_width {
+            let mut current_width = "> ".width();
+            let mut truncated = String::from("> ");
+            
+            for ch in app.input_buffer.chars() {
+                let char_width = ch.width().unwrap_or(0);
+                if current_width + char_width > max_input_width {
+                    break;
+                }
+                truncated.push(ch);
+                current_width += char_width;
+            }
+            truncated
+        } else {
+            input_display
+        };
+        
         queue!(
             stdout,
             cursor::MoveTo(0, help_y),
@@ -977,9 +1150,29 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             Print(format!("{}{}", message, " ".repeat(padding_len))),
             ResetColor,
             cursor::MoveTo(0, help_y + 1),
-            Print(format!("> {}", app.input_buffer))
+            Print(&truncated_input)
         )?;
     } else if app.input_mode == InputMode::Editing {
+        // 入力バッファを画面幅に合わせて切り詰める
+        let input_display = format!("> {}", app.input_buffer);
+        let max_input_width = width as usize;
+        let truncated_input = if input_display.width() > max_input_width {
+            let mut current_width = "> ".width();
+            let mut truncated = String::from("> ");
+            
+            for ch in app.input_buffer.chars() {
+                let char_width = ch.width().unwrap_or(0);
+                if current_width + char_width > max_input_width {
+                    break;
+                }
+                truncated.push(ch);
+                current_width += char_width;
+            }
+            truncated
+        } else {
+            input_display
+        };
+        
         queue!(
             stdout,
             cursor::MoveTo(0, help_y),
@@ -988,18 +1181,39 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             Print(format!("Edit Task [Enter: Save, Esc: Cancel]{}", " ".repeat((width as usize).saturating_sub(38)))),
             ResetColor,
             cursor::MoveTo(0, help_y + 1),
-            Print(format!("> {}", app.input_buffer))
+            Print(&truncated_input)
         )?;
     } else if app.input_mode == InputMode::Deleting {
         if let Some(task_id) = &app.deleting_task_id {
             if let Some(task) = app.tasks.iter().find(|t| t.id == *task_id) {
                 let delete_text = format!("delete {}", task.title);
-                let padding = " ".repeat((width as usize).saturating_sub(delete_text.len()));
+                
+                // 画面幅に合わせて切り詰める
+                let max_width = width as usize;
+                let truncated_delete_text = if delete_text.width() > max_width {
+                    let mut truncated = String::from("delete ");
+                    let mut current_width = "delete ".width();
+                    
+                    for ch in task.title.chars() {
+                        let char_width = ch.width().unwrap_or(0);
+                        if current_width + char_width > max_width.saturating_sub(3) {
+                            truncated.push_str("...");
+                            break;
+                        }
+                        truncated.push(ch);
+                        current_width += char_width;
+                    }
+                    truncated
+                } else {
+                    delete_text
+                };
+                
+                let padding = " ".repeat(max_width.saturating_sub(truncated_delete_text.width()));
                 queue!(
                     stdout,
                     cursor::MoveTo(0, help_y),
                     SetBackgroundColor(colors.delete_bg.to_crossterm_color()),
-                    Print(format!("{}{}", delete_text, padding)),
+                    Print(format!("{}{}", truncated_delete_text, padding)),
                     ResetColor,
                     cursor::MoveTo(0, help_y + 1),
                     Print("> "),
@@ -1010,16 +1224,51 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
                 )?;
             }
         }
-    } else {
+    } else if app.input_mode == InputMode::Help {
+        // ヘルプモード時
         queue!(
             stdout,
             cursor::MoveTo(0, help_y),
             SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
             SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
-            Print(format!("help{}", " ".repeat((width as usize).saturating_sub(4)))),
+            Print(format!("Quick Help{}", " ".repeat((width as usize).saturating_sub(10)))),
             ResetColor,
             cursor::MoveTo(0, help_y + 1),
-            Print("(n)ew | (k,↑) prev | (j,↓) next | (e)dit | (d)elete | (space) toggle | (enter,l,→) in | (backspace,h,←) out | (u/c/a) filter(unfinished/completed/all) | (|) split | (q)uit")
+            Print("Press (m) to close help")
+        )?;
+    } else {
+        let help_text = "(m)anual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [l]in | [h]out | [u/c/a]filter | [|]split | (q)uit";
+        
+        // 画面幅に合わせてヘルプテキストを切り詰める
+        let max_help_width = width as usize;
+        let truncated_help = if help_text.width() > max_help_width {
+            // 表示幅を考慮して切り詰め
+            let mut current_width = 0;
+            let mut truncated = String::new();
+            
+            for ch in help_text.chars() {
+                let char_width = ch.width().unwrap_or(0);
+                if current_width + char_width > max_help_width.saturating_sub(3) {
+                    truncated.push_str("...");
+                    break;
+                }
+                truncated.push(ch);
+                current_width += char_width;
+            }
+            truncated
+        } else {
+            help_text.to_string()
+        };
+        
+        queue!(
+            stdout,
+            cursor::MoveTo(0, help_y),
+            SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
+            Print(format!("Quick Help{}", " ".repeat((width as usize).saturating_sub(10)))),
+            ResetColor,
+            cursor::MoveTo(0, help_y + 1),
+            Print(&truncated_help)
         )?;
     }
     
