@@ -540,7 +540,7 @@ fn run_app<W: Write>(app: &mut App, stdout: &mut W) -> io::Result<()> {
         if let Event::Key(key) = event::read()? {
             // Pressイベントのみを処理（ReleaseやRepeatは無視）
             if key.kind == KeyEventKind::Press {
-                if app.input_mode == InputMode::Adding || app.input_mode == InputMode::Editing || app.input_mode == InputMode::Deleting {
+                if app.input_mode == InputMode::Adding || app.input_mode == InputMode::Editing || app.input_mode == InputMode::Deleting || app.input_mode == InputMode::Help {
                     handle_input_mode(app, key);
                 } else {
                     if handle_normal_mode(app, key)? {
@@ -563,30 +563,72 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Esc => {
-            app.input_buffer.clear();
-            app.cursor_position = 0;
-            app.editing_task_id = None;
-            app.deleting_task_id = None;
-            app.input_mode = InputMode::Normal;
-        }
-        KeyCode::Char('m') => {
-            // ヘルプモードの場合は終了
             if app.input_mode == InputMode::Help {
                 app.input_mode = InputMode::Normal;
+            } else {
+                app.input_buffer.clear();
+                app.cursor_position = 0;
+                app.editing_task_id = None;
+                app.deleting_task_id = None;
+                app.input_mode = InputMode::Normal;
+            }
+        }
+        KeyCode::Char('m') => {
+            if app.input_mode != InputMode::Deleting && app.input_mode != InputMode::Help {
+                // カーソル位置に文字を挿入
+                let chars: Vec<char> = app.input_buffer.chars().collect();
+                let mut new_buffer = String::new();
+                for (i, ch) in chars.iter().enumerate() {
+                    if i == app.cursor_position {
+                        new_buffer.push('m');
+                    }
+                    new_buffer.push(*ch);
+                }
+                if app.cursor_position >= chars.len() {
+                    new_buffer.push('m');
+                }
+                app.input_buffer = new_buffer;
+                app.cursor_position += 1;
             }
         }
         KeyCode::Char(c @ ('y' | 'Y')) => {
             if app.input_mode == InputMode::Deleting {
                 app.confirm_delete();
-            } else {
-                app.input_buffer.push(c);
+            } else if app.input_mode != InputMode::Help {
+                // カーソル位置に文字を挿入
+                let chars: Vec<char> = app.input_buffer.chars().collect();
+                let mut new_buffer = String::new();
+                for (i, ch) in chars.iter().enumerate() {
+                    if i == app.cursor_position {
+                        new_buffer.push(c);
+                    }
+                    new_buffer.push(*ch);
+                }
+                if app.cursor_position >= chars.len() {
+                    new_buffer.push(c);
+                }
+                app.input_buffer = new_buffer;
+                app.cursor_position += 1;
             }
         }
         KeyCode::Char(c @ ('n' | 'N')) => {
             if app.input_mode == InputMode::Deleting {
                 app.cancel_delete();
-            } else {
-                app.input_buffer.push(c);
+            } else if app.input_mode != InputMode::Help {
+                // カーソル位置に文字を挿入
+                let chars: Vec<char> = app.input_buffer.chars().collect();
+                let mut new_buffer = String::new();
+                for (i, ch) in chars.iter().enumerate() {
+                    if i == app.cursor_position {
+                        new_buffer.push(c);
+                    }
+                    new_buffer.push(*ch);
+                }
+                if app.cursor_position >= chars.len() {
+                    new_buffer.push(c);
+                }
+                app.input_buffer = new_buffer;
+                app.cursor_position += 1;
             }
         }
         KeyCode::Char(c) => {
@@ -951,23 +993,24 @@ fn draw_help_full<W: Write>(app: &App, stdout: &mut W, _width: u16, height: u16)
         "Manual: TerDO の使い方",
         "",
         "キー - 対応する動作",
-        "  A - 全てのタスクを表示",
-        "  C - 完了済みタスクを表示",
-        "  D - タスクの削除",
-        "  E - タスクの編集",
-        "  F - タスクの検索（未実装）",
-        "  H, ←, BACKSPACE - 親タスクに戻る",
-        "  J, ↓ - タスクを下に移動",
-        "  K, ↑ - タスクを上に移動",
-        "  L, →, ENTER - サブタスクに移動",
-        "  M - ヘルプを表示・非表示",
-        "  N - タスクの作成",
-        "  Q - アプリケーションを終了",
-        "  R - タスクのリストを更新",
-        "  S - タスクの並び替え",
-        "  T - タスクの完了状態を切り替え",
-        "  | - 画面分割の切り替えON/OFF",
-        "  SPACE - タスクの完了状態を切り替え",
+        "  A - all: 全てのタスクを表示",
+        "  C - completed: 完了済みタスクを表示",
+        "  D - delete: タスクの削除",
+        "  E - edit: タスクの編集",
+        "  F - find: タスクの検索（未実装）",
+        "  H, ←, BACKSPACE - back/left: 親タスクに戻る / 左ペインをアクティブ",
+        "  J, ↓ - down: タスクを下に移動",
+        "  K, ↑ - up: タスクを上に移動",
+        "  L, →, ENTER - right: サブタスクに移動 / 右ペインをアクティブ",
+        "  M - manual: マニュアルを表示",
+        "  N - new: タスクの作成",
+        "  Q - quit: アプリケーションを終了",
+        "  R - refresh: タスクのリストを更新",
+        "  S - sort: タスクの並び替え",
+        "  T - toggle: タスクの完了状態を切り替え",
+        "  | - split: 画面分割の切り替えON/OFF",
+        "  SPACE - toggle complete: タスクの完了状態を切り替え",
+        "  ESC - close manual: マニュアルを閉じる",
         "",
     ];
     
@@ -1003,23 +1046,24 @@ fn draw_help_pane<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) 
         "Manual: TerDO の使い方",
         "",
         "キー - 対応する動作",
-        "  A - all: 全てのタスクを表示",
-        "  C - completed: 完了済みタスクを表示",
-        "  D - delete: タスクの削除",
-        "  E - edit: タスクの編集",
-        "  F - find: タスクの検索（未実装）",
-        "  H, ←, BACKSPACE - back/left: 親タスクに戻る / 左ペインをアクティブ",
-        "  J, ↓ - down: タスクを下に移動",
-        "  K, ↑ - up: タスクを上に移動",
-        "  L, →, ENTER - right: サブタスクに移動 / 右ペインをアクティブ",
-        "  M - manual: ヘルプを表示・非表示",
-        "  N - new: タスクの作成",
-        "  Q - quit: アプリケーションを終了",
-        "  R - refresh: タスクのリストを更新",
-        "  S - sort: タスクの並び替え",
-        "  T - toggle: タスクの完了状態を切り替え",
-        "  | - split: 画面分割の切り替えON/OFF",
-        "  SPACE - toggle complete: タスクの完了状態を切り替え",
+        "  A - 全てのタスクを表示",
+        "  C - 完了済みタスクを表示",
+        "  D - タスクの削除",
+        "  E - タスクの編集",
+        "  F - タスクの検索（未実装）",
+        "  H, ←, BACKSPACE - 親タスクに戻る",
+        "  J, ↓ - タスクを下に移動",
+        "  K, ↑ - タスクを上に移動",
+        "  L, →, ENTER - サブタスクに移動",
+        "  M - マニュアルを表示",
+        "  N - タスクの作成",
+        "  Q - アプリケーションを終了",
+        "  R - タスクのリストを更新",
+        "  S - タスクの並び替え",
+        "  T - タスクの完了状態を切り替え",
+        "  | - 画面分割の切り替えON/OFF",
+        "  SPACE - タスクの完了状態を切り替え",
+        "  ESC - マニュアルを閉じる",
         "",
     ];
     
@@ -1306,10 +1350,10 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             cursor::MoveTo(0, help_y),
             SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
             SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
-            Print(format!("Quick Help{}", " ".repeat((width as usize).saturating_sub(10)))),
+            Print(format!("Manual{}", " ".repeat((width as usize).saturating_sub(6)))),
             ResetColor,
             cursor::MoveTo(0, help_y + 1),
-            Print("Press (m) to close help")
+            Print("Press ESC to close")
         )?;
     } else {
         let help_text = "(m)anual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [l]in | [h]out | [u/c/a]filter | [|]split | (q)uit";
