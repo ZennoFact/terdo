@@ -26,6 +26,7 @@ impl RgbColor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 struct ColorScheme {
     selected_bg: RgbColor,
     selected_fg: RgbColor,
@@ -37,21 +38,23 @@ struct ColorScheme {
     filter_completed_fg: RgbColor,
     filter_unfinished_fg: RgbColor,
     delete_fg: RgbColor,
+    empty_view_fg: RgbColor,
 }
 
-impl ColorScheme {
+impl Default for ColorScheme {
     fn default() -> Self {
         Self {
             selected_bg: RgbColor { r: 173, g: 216, b: 230 },
             selected_fg: RgbColor { r: 40, g: 40, b: 40 },
             inactive_selected_bg: RgbColor { r: 169, g: 169, b: 169 },
-            inactive_selected_fg: RgbColor { r: 255, g: 255, b: 255 },
+            inactive_selected_fg: RgbColor { r: 0, g: 0, b: 0 },
             delete_bg: RgbColor { r: 180, g: 80, b: 80 },
-            title_fg: RgbColor { r: 30, g: 144, b: 255 },
+            title_fg: RgbColor { r: 80, g: 184, b: 255 },
             filter_all_fg: RgbColor { r: 173, g: 216, b: 230 },
             filter_completed_fg: RgbColor { r: 144, g: 238, b: 144 },
             filter_unfinished_fg: RgbColor { r: 255, g: 255, b: 153 },
             delete_fg: RgbColor { r: 178, g: 34, b: 34 },
+            empty_view_fg: RgbColor { r: 160, g: 240, b: 160 },
         }
     }
 }
@@ -423,7 +426,14 @@ fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, Settings)> {
     // 設定ファイルの読み込みまたは作成
     let settings = if settings_path.exists() {
         let content = fs::read_to_string(&settings_path)?;
-        toml::from_str(&content).unwrap_or_else(|_| Settings::default())
+        let loaded_settings: Settings = toml::from_str(&content).unwrap_or_else(|_| Settings::default());
+        
+        // 設定ファイルを最新の形式で上書き（新しいフィールドを追加）
+        let toml_string = toml::to_string_pretty(&loaded_settings)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        fs::write(&settings_path, toml_string)?;
+        
+        loaded_settings
     } else {
         let default_settings = Settings::default();
         let toml_string = toml::to_string_pretty(&default_settings)
@@ -649,8 +659,16 @@ fn draw_single_view<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16
         // サブタスクビューで空の場合
         queue!(stdout, 
             cursor::MoveTo(0, 1),
-            SetForegroundColor(colors.title_fg.to_crossterm_color()),
+            SetForegroundColor(colors.empty_view_fg.to_crossterm_color()),
             Print("create (n)ew sub-task"),
+            ResetColor
+        )?;
+    } else if current_tasks.is_empty() && app.current_parent.is_none() {
+        // 親タスクが空の場合
+        queue!(stdout, 
+            cursor::MoveTo(0, 1),
+            SetForegroundColor(colors.empty_view_fg.to_crossterm_color()),
+            Print("create (n)ew task"),
             ResetColor
         )?;
     } else {
@@ -717,13 +735,31 @@ fn draw_split_view<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16)
     let filter_pos = split_x.saturating_sub(filter_text.len() as u16 + 2);
     queue!(stdout, cursor::MoveTo(filter_pos, 0), SetForegroundColor(filter_color), Print(filter_text), ResetColor)?;
     
-    for (i, task) in parent_tasks.iter().enumerate().take(height as usize) {
-        queue!(stdout, cursor::MoveTo(0, i as u16 + 1))?;
-        
-        let selected_and_active = i == app.selected_index && app.active_pane == Pane::Left;
-        let selected_but_inactive = i == app.selected_index && app.active_pane == Pane::Right;
-        let prefix = if i == app.selected_index { "> " } else { "  " };
-        let status = if task.completed { "[x]" } else { "[ ]" };
+    if parent_tasks.is_empty() {
+        // 親タスクが空の場合
+        if app.active_pane == Pane::Left {
+            queue!(stdout, 
+                cursor::MoveTo(0, 1),
+                SetForegroundColor(colors.empty_view_fg.to_crossterm_color()),
+                Print("create (n)ew task"),
+                ResetColor
+            )?;
+        } else {
+            queue!(stdout, 
+                cursor::MoveTo(0, 1),
+                SetForegroundColor(Color::DarkGrey),
+                Print("create (n)ew task"),
+                ResetColor
+            )?;
+        }
+    } else {
+        for (i, task) in parent_tasks.iter().enumerate().take(height as usize) {
+            queue!(stdout, cursor::MoveTo(0, i as u16 + 1))?;
+            
+            let selected_and_active = i == app.selected_index && app.active_pane == Pane::Left;
+            let selected_but_inactive = i == app.selected_index && app.active_pane == Pane::Right;
+            let prefix = if i == app.selected_index { "> " } else { "  " };
+            let status = if task.completed { "[x]" } else { "[ ]" };
         
         // completedフィルター時に親タスクに完了済みサブタスクがあるかチェック
         let is_parent_with_completed_subtasks = 
@@ -770,6 +806,7 @@ fn draw_split_view<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16)
             )?;
         }
     }
+    }
     
     // 区切り線
     for y in 0..=height {
@@ -798,7 +835,7 @@ fn draw_split_view<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16)
             if app.active_pane == Pane::Right {
                 queue!(stdout, 
                     cursor::MoveTo(split_x + 2, 1),
-                    SetForegroundColor(colors.title_fg.to_crossterm_color()),
+                    SetForegroundColor(colors.empty_view_fg.to_crossterm_color()),
                     Print("create (n)ew sub-task"),
                     ResetColor
                 )?;
@@ -840,6 +877,23 @@ fn draw_split_view<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16)
                 }
             }
         }
+    } else {
+        // 親タスクが空の場合
+        if app.active_pane == Pane::Right {
+            queue!(stdout, 
+                cursor::MoveTo(split_x + 2, 1),
+                SetForegroundColor(colors.empty_view_fg.to_crossterm_color()),
+                Print("select task on left pane"),
+                ResetColor
+            )?;
+        } else {
+            queue!(stdout, 
+                cursor::MoveTo(split_x + 2, 1),
+                SetForegroundColor(Color::DarkGrey),
+                Print("select task on left pane"),
+                ResetColor
+            )?;
+        }
     }
     
     Ok(())
@@ -867,6 +921,7 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             stdout,
             cursor::MoveTo(0, help_y),
             SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
             Print(format!("{}{}", message, " ".repeat(padding_len))),
             ResetColor,
             cursor::MoveTo(0, help_y + 1),
@@ -877,6 +932,7 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             stdout,
             cursor::MoveTo(0, help_y),
             SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
             Print(format!("Edit Task [Enter: Save, Esc: Cancel]{}", " ".repeat((width as usize).saturating_sub(38)))),
             ResetColor,
             cursor::MoveTo(0, help_y + 1),
@@ -907,6 +963,7 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             stdout,
             cursor::MoveTo(0, help_y),
             SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
             Print(format!("help{}", " ".repeat((width as usize).saturating_sub(4)))),
             ResetColor,
             cursor::MoveTo(0, help_y + 1),
