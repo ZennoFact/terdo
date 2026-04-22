@@ -1205,17 +1205,43 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
     let colors = &app.settings.colors;
     
     // 右ペイン（サブタスク）
+    let right_pane_width = width - split_x - 1;
+    let (filter_text, _) = app.get_filter_display();
+    
     let title = if !parent_tasks.is_empty() && app.selected_index < parent_tasks.len() {
         let parent_title = &parent_tasks[app.selected_index].title;
-        format!("Sub-task List @{}", parent_title)
+        let prefix = "Sub-task List @";
+        let full_title = format!("{}{}", prefix, parent_title);
+        
+        // フィルター表示分のスペースを確保してタイトルを切り詰める
+        let max_title_width = (right_pane_width as usize).saturating_sub(filter_text.len() + 2);
+        
+        if full_title.width() > max_title_width {
+            let mut current_width = prefix.width();
+            let mut truncated = String::from(prefix);
+            
+            for ch in parent_title.chars() {
+                let char_width = ch.width().unwrap_or(0);
+                // "..." 用に3文字分のスペースを確保
+                if current_width + char_width + 3 > max_title_width {
+                    truncated.push_str("...");
+                    break;
+                }
+                truncated.push(ch);
+                current_width += char_width;
+            }
+            truncated
+        } else {
+            full_title
+        }
     } else {
         "Subtasks".to_string()
     };
+    
     queue!(stdout, cursor::MoveTo(split_x + 1, 0), SetForegroundColor(colors.title_fg.to_crossterm_color()), Print(&title), ResetColor)?;
     
     // フィルター状態を右ペインの右端に表示
     let (filter_text, filter_color) = app.get_filter_display();
-    let right_pane_width = width - split_x - 1;
     let filter_pos = split_x + 1 + right_pane_width.saturating_sub(filter_text.len() as u16 + 1);
     queue!(stdout, cursor::MoveTo(filter_pos, 0), SetForegroundColor(filter_color), Print(filter_text), ResetColor)?;
     
