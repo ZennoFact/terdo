@@ -200,6 +200,26 @@ impl App {
         }).collect()
     }
 
+    fn update_parent_completion(&mut self, parent_id: &str) {
+        let subtasks: Vec<_> = self.tasks
+            .iter()
+            .filter(|t| t.parent_id.as_deref() == Some(parent_id))
+            .collect();
+        
+        // サブタスクが存在しない場合は何もしない
+        if subtasks.is_empty() {
+            return;
+        }
+        
+        // 全サブタスクが完了しているかチェック
+        let all_completed = subtasks.iter().all(|t| t.completed);
+        
+        // 親タスクの完了状態を更新
+        if let Some(parent) = self.tasks.iter_mut().find(|t| t.id == parent_id) {
+            parent.completed = all_completed;
+        }
+    }
+
     fn get_parent_for_new_task(&self) -> Option<String> {
         if self.split_view && self.active_pane == Pane::Right {
             // 右ペインがアクティブな場合、左ペインで選択されている親タスクのIDを返す
@@ -339,20 +359,28 @@ impl App {
                 let subtasks = self.get_filtered_subtasks(selected_task_id);
                 if !subtasks.is_empty() && self.right_pane_selected_index < subtasks.len() {
                     let task_id = subtasks[self.right_pane_selected_index].id.clone();
+                    let parent_id = selected_task_id.clone();
                     if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.completed = !task.completed;
-                        let _ = save_tasks(&self.tasks, &self.tasks_path);
                     }
+                    // 親タスクの自動完了をチェック
+                    self.update_parent_completion(&parent_id);
+                    let _ = save_tasks(&self.tasks, &self.tasks_path);
                 }
             }
         } else {
             let current_tasks = self.get_current_tasks();
             if !current_tasks.is_empty() && self.selected_index < current_tasks.len() {
                 let task_id = current_tasks[self.selected_index].id.clone();
+                let parent_id = current_tasks[self.selected_index].parent_id.clone();
                 if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
                     task.completed = !task.completed;
-                    let _ = save_tasks(&self.tasks, &self.tasks_path);
                 }
+                // サブタスクの場合、親タスクの自動完了をチェック
+                if let Some(pid) = parent_id {
+                    self.update_parent_completion(&pid);
+                }
+                let _ = save_tasks(&self.tasks, &self.tasks_path);
             }
         }
     }
