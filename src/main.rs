@@ -238,8 +238,18 @@ impl App {
     fn add_task(&mut self) {
         if !self.input_buffer.trim().is_empty() {
             let parent_id = self.get_parent_for_new_task();
-            let task = Task::new(self.input_buffer.clone(), parent_id);
+            let task = Task::new(self.input_buffer.clone(), parent_id.clone());
             self.tasks.push(task);
+            
+            // 完了している親タスクに新規サブタスクを追加した場合、親タスクの完了を解除
+            if let Some(pid) = parent_id {
+                if let Some(parent) = self.tasks.iter_mut().find(|t| t.id == pid) {
+                    if parent.completed {
+                        parent.completed = false;
+                    }
+                }
+            }
+            
             let _ = save_tasks(&self.tasks, &self.tasks_path);
         }
         self.input_buffer.clear();
@@ -320,7 +330,18 @@ impl App {
 
     fn confirm_delete(&mut self) {
         if let Some(task_id) = &self.deleting_task_id {
+            // 削除するタスクの情報を保存（親タスクの完了状態を更新するため）
+            let deleted_task_info = self.tasks.iter()
+                .find(|t| t.id == *task_id)
+                .map(|t| (t.parent_id.clone(), t.completed));
+            
             self.tasks.retain(|t| t.id != *task_id && t.parent_id.as_deref() != Some(task_id));
+            
+            // 未完了のサブタスクを削除した場合、親タスクの完了状態を更新
+            if let Some((Some(parent_id), false)) = deleted_task_info {
+                self.update_parent_completion(&parent_id);
+            }
+            
             let _ = save_tasks(&self.tasks, &self.tasks_path);
             
             if self.split_view && self.active_pane == Pane::Right {
