@@ -896,7 +896,7 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             
             let _ = save_settings(&app.settings, &app.settings_path);
         }
-        KeyCode::Char('m') => {
+        KeyCode::Char('?') => {
             app.input_mode = InputMode::Help;
         }
         _ => {}
@@ -1148,12 +1148,12 @@ fn draw_help_full<W: Write>(app: &App, stdout: &mut W, _width: u16, height: u16)
         "  J, ↓ - down: タスクを下に移動",
         "  K, ↑ - up: タスクを上に移動",
         "  L, →, ENTER - right: サブタスクに移動 / 右ペインをアクティブ",
-        "  M - manual: マニュアルを表示",
         "  N - new: タスクの作成",
         "  Q - quit: アプリケーションを終了",
         "  R - refresh: タスクのリストを更新",
         "  S - sort: タスクの並び替え",
         "  T - toggle: タスクの完了状態を切り替え",
+        "  ? - manual: マニュアルを表示",
         "  | - split: 画面分割の切り替えON/OFF",
         "  SPACE - toggle complete: タスクの完了状態を切り替え",
         "  ESC - close manual: マニュアルを閉じる",
@@ -1202,12 +1202,12 @@ fn draw_help_pane<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) 
         "  J, ↓ - タスクを下に移動",
         "  K, ↑ - タスクを上に移動",
         "  L, →, ENTER - サブタスクに移動",
-        "  M - マニュアルを表示",
         "  N - タスクの作成",
         "  Q - アプリケーションを終了",
         "  R - タスクのリストを更新",
         "  S - タスクの並び替え",
         "  T - タスクの完了状態を切り替え",
+        "  ? - マニュアルを表示",
         "  | - 画面分割の切り替えON/OFF",
         "  SPACE - タスクの完了状態を切り替え",
         "  ESC - マニュアルを閉じる",
@@ -1548,7 +1548,7 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             Print("Press ESC to close")
         )?;
     } else {
-        let help_text = "(m)anual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [l]in | [h]out | [u/c/a]filter | [|]split | (q)uit";
+        let help_text = "[?]Manual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [l]in | [h]out | [u/c/a]filter | [|]split | (q)uit";
         
         // 画面幅に合わせてヘルプテキストを切り詰める
         let max_help_width = width as usize;
