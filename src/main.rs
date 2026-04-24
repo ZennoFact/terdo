@@ -1,7 +1,7 @@
 use crossterm::{
     cursor, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute, queue,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use serde::{Deserialize, Serialize};
@@ -85,6 +85,8 @@ struct Task {
     title: String,
     completed: bool,
     parent_id: Option<String>,
+    #[serde(default)]
+    important: bool,
 }
 
 impl Task {
@@ -94,6 +96,7 @@ impl Task {
             title,
             completed: false,
             parent_id,
+            important: false,
         }
     }
 }
@@ -400,6 +403,32 @@ impl App {
                 // サブタスクの場合、親タスクの自動完了をチェック
                 if let Some(pid) = parent_id {
                     self.update_parent_completion(&pid);
+                }
+                let _ = save_tasks(&self.tasks, &self.tasks_path);
+            }
+        }
+    }
+
+    fn toggle_important(&mut self) {
+        if self.split_view && self.active_pane == Pane::Right {
+            let parent_tasks = self.get_current_tasks();
+            if !parent_tasks.is_empty() && self.selected_index < parent_tasks.len() {
+                let selected_task_id = &parent_tasks[self.selected_index].id;
+                let subtasks = self.get_filtered_subtasks(selected_task_id);
+                if !subtasks.is_empty() && self.right_pane_selected_index < subtasks.len() {
+                    let task_id = subtasks[self.right_pane_selected_index].id.clone();
+                    if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.important = !task.important;
+                    }
+                    let _ = save_tasks(&self.tasks, &self.tasks_path);
+                }
+            }
+        } else {
+            let current_tasks = self.get_current_tasks();
+            if !current_tasks.is_empty() && self.selected_index < current_tasks.len() {
+                let task_id = current_tasks[self.selected_index].id.clone();
+                if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                    task.important = !task.important;
                 }
                 let _ = save_tasks(&self.tasks, &self.tasks_path);
             }
@@ -859,6 +888,9 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         KeyCode::Char(' ') => {
             app.toggle_complete();
         }
+        KeyCode::Char('!') => {
+            app.toggle_important();
+        }
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
             app.enter_subtask();
         }
@@ -1026,6 +1058,7 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
             let selected = i == app.selected_index;
             let prefix = if selected { "> " } else { "  " };
             let status = if task.completed { "[x]" } else { "[ ]" };
+            let important_mark = if task.important { "!" } else { " " };
             let has_subtasks = !app.get_subtasks(&task.id).is_empty();
             let subtask_indicator = if has_subtasks && !app.split_view { " +" } else { "" };
             
@@ -1035,7 +1068,7 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                 !task.completed && 
                 app.has_completed_subtasks(&task.id);
             
-            let display = format!("{}{} {}{}", prefix, status, task.title, subtask_indicator);
+            let display = format!("{}{}{}{}{}", prefix, status, important_mark, task.title, subtask_indicator);
             
             // 折り返し処理
             let max_width = if app.split_view { 
@@ -1072,34 +1105,103 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                     } else {
                         " ".repeat((width as usize).saturating_sub(display_text.width()))
                     };
-                    queue!(stdout, 
-                        SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
-                        SetForegroundColor(colors.selected_fg.to_crossterm_color()),
-                        Print(format!("{}{}", display_text, padding)),
-                        ResetColor
-                    )?;
+                    
+                    // 重要度マークの位置を特定して色分け表示
+                    if is_first_line && task.important {
+                        let prefix_status = format!("{}{}", prefix, status);
+                        let rest = format!("{}{}", task.title, subtask_indicator);
+                        queue!(stdout, 
+                            SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                            Print(&prefix_status),
+                            SetAttribute(Attribute::Bold),
+                            SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                            Print("!"),
+                            SetAttribute(Attribute::NoBold),
+                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", rest, padding)),
+                            ResetColor
+                        )?;
+                    } else {
+                        queue!(stdout, 
+                            SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", display_text, padding)),
+                            ResetColor
+                        )?;
+                    }
                 } else if selected && is_split_and_active_right {
                     let padding = " ".repeat(max_width.saturating_sub(display_text.width()));
-                    queue!(stdout, 
-                        SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
-                        SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
-                        Print(format!("{}{}", display_text, padding)),
-                        ResetColor
-                    )?;
+                    
+                    if is_first_line && task.important {
+                        let prefix_status = format!("{}{}", prefix, status);
+                        let rest = format!("{}{}", task.title, subtask_indicator);
+                        queue!(stdout, 
+                            SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
+                            Print(&prefix_status),
+                            SetAttribute(Attribute::Bold),
+                            SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                            Print("!"),
+                            SetAttribute(Attribute::NoBold),
+                            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", rest, padding)),
+                            ResetColor
+                        )?;
+                    } else {
+                        queue!(stdout, 
+                            SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", display_text, padding)),
+                            ResetColor
+                        )?;
+                    }
                 } else if is_parent_with_completed_subtasks {
                     // 完了済みサブタスクを持つ未完了の親タスクはグレー
-                    queue!(stdout, 
-                        SetForegroundColor(Color::DarkGrey),
-                        Print(&display_text),
-                        ResetColor
-                    )?;
+                    if is_first_line && task.important {
+                        let prefix_status = format!("{}{}", prefix, status);
+                        let rest = format!("{}{}", task.title, subtask_indicator);
+                        queue!(stdout, 
+                            SetForegroundColor(Color::DarkGrey),
+                            Print(&prefix_status),
+                            SetAttribute(Attribute::Bold),
+                            SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                            Print("!"),
+                            SetAttribute(Attribute::NoBold),
+                            SetForegroundColor(Color::DarkGrey),
+                            Print(&rest),
+                            ResetColor
+                        )?;
+                    } else {
+                        queue!(stdout, 
+                            SetForegroundColor(Color::DarkGrey),
+                            Print(&display_text),
+                            ResetColor
+                        )?;
+                    }
                 } else {
                     // 通常表示（白色）
-                    queue!(stdout, 
-                        SetForegroundColor(Color::White),
-                        Print(&display_text),
-                        ResetColor
-                    )?;
+                    if is_first_line && task.important {
+                        let prefix_status = format!("{}{}", prefix, status);
+                        let rest = format!("{}{}", task.title, subtask_indicator);
+                        queue!(stdout, 
+                            SetForegroundColor(Color::White),
+                            Print(&prefix_status),
+                            SetAttribute(Attribute::Bold),
+                            SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                            Print("!"),
+                            SetAttribute(Attribute::NoBold),
+                            SetForegroundColor(Color::White),
+                            Print(&rest),
+                            ResetColor
+                        )?;
+                    } else {
+                        queue!(stdout, 
+                            SetForegroundColor(Color::White),
+                            Print(&display_text),
+                            ResetColor
+                        )?;
+                    }
                 }
                 
                 current_line += 1;
@@ -1139,6 +1241,7 @@ fn draw_help_full<W: Write>(app: &App, stdout: &mut W, _width: u16, height: u16)
         "Manual: TerDO の使い方",
         "",
         "キー - 対応する動作",
+        "  ! - important: タスクの重要度を切り替え",
         "  A - all: 全てのタスクを表示",
         "  C - completed: 完了済みタスクを表示",
         "  D - delete: タスクの削除",
@@ -1193,6 +1296,7 @@ fn draw_help_pane<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) 
         "Manual: TerDO の使い方",
         "",
         "キー - 対応する動作",
+        "  ! - タスクの重要度を切り替え",
         "  A - 全てのタスクを表示",
         "  C - 完了済みタスクを表示",
         "  D - タスクの削除",
@@ -1321,8 +1425,9 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
                 let selected = app.active_pane == Pane::Right && i == app.right_pane_selected_index;
                 let prefix = if i == app.right_pane_selected_index { "> " } else { "  " };
                 let status = if task.completed { "[x]" } else { "[ ]" };
+                let important_mark = if task.important { "!" } else { " " };
                 
-                let display = format!("{}{} {}", prefix, status, task.title);
+                let display = format!("{}{}{}{}", prefix, status, important_mark, task.title);
                 
                 // 折り返し処理
                 let max_width = right_pane_width as usize;
@@ -1350,19 +1455,53 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
                     
                     if selected {
                         let padding = " ".repeat(max_width.saturating_sub(display_text.width()));
-                        queue!(stdout,
-                            SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
-                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
-                            Print(format!("{}{}", display_text, padding)),
-                            ResetColor
-                        )?;
+                        
+                        if is_first_line && task.important {
+                            let prefix_status = format!("{}{}", prefix, status);
+                            let rest = task.title.clone();
+                            queue!(stdout,
+                                SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                                SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                                Print(&prefix_status),
+                                SetAttribute(Attribute::Bold),
+                                SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                                Print("!"),
+                                SetAttribute(Attribute::NoBold),
+                                SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                                Print(format!("{}{}", rest, padding)),
+                                ResetColor
+                            )?;
+                        } else {
+                            queue!(stdout,
+                                SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                                SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                                Print(format!("{}{}", display_text, padding)),
+                                ResetColor
+                            )?;
+                        }
                     } else {
                         // 通常表示（白色）
-                        queue!(stdout, 
-                            SetForegroundColor(Color::White),
-                            Print(&display_text),
-                            ResetColor
-                        )?;
+                        if is_first_line && task.important {
+                            let prefix_status = format!("{}{}", prefix, status);
+                            let rest = task.title.clone();
+                            queue!(stdout, 
+                                SetForegroundColor(Color::White),
+                                Print(&prefix_status),
+                                SetAttribute(Attribute::Bold),
+                                SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                                Print("!"),
+                                SetAttribute(Attribute::NoBold),
+                                SetForegroundColor(Color::White),
+                                Print(&rest),
+                                ResetColor
+                            )?;
+                        } else {
+                            queue!(stdout, 
+                                SetForegroundColor(Color::White),
+                                Print(&display_text),
+                                ResetColor
+                            )?;
+                        }
                     }
                     
                     current_line += 1;
@@ -1548,7 +1687,7 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             Print("Press ESC to close")
         )?;
     } else {
-        let help_text = "[?]Manual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [l]in | [h]out | [u/c/a]filter | [|]split | (q)uit";
+        let help_text = "[?]Manual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [!]important | [l]in | [h]out | [u/c/a]filter | (q)uit";
         
         // 画面幅に合わせてヘルプテキストを切り詰める
         let max_help_width = width as usize;
