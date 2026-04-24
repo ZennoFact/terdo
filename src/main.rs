@@ -85,6 +85,8 @@ struct Task {
     title: String,
     completed: bool,
     parent_id: Option<String>,
+    #[serde(default)]
+    important: bool,
 }
 
 impl Task {
@@ -94,6 +96,7 @@ impl Task {
             title,
             completed: false,
             parent_id,
+            important: false,
         }
     }
 }
@@ -114,6 +117,8 @@ struct App {
     settings: Settings,
     tasks_path: PathBuf,
     settings_path: PathBuf,
+    _manual_path: PathBuf,
+    manual_content: Vec<String>,
 }
 
 #[derive(PartialEq)]
@@ -140,10 +145,11 @@ enum Pane {
 
 impl App {
     fn new() -> io::Result<Self> {
-        let (tasks_path, settings_path, settings) = initialize_config_dir()?;
+        let (tasks_path, settings_path, manual_path, settings) = initialize_config_dir()?;
         let tasks = load_tasks(&tasks_path)?;
         let split_view = settings.split_view;
         let filter_mode = settings.filter_mode;
+        let manual_content = load_manual(&manual_path)?;
         Ok(Self {
             tasks,
             selected_index: 0,
@@ -160,6 +166,8 @@ impl App {
             settings,
             tasks_path,
             settings_path,
+            _manual_path: manual_path,
+            manual_content,
         })
     }
 
@@ -406,6 +414,32 @@ impl App {
         }
     }
 
+    fn toggle_important(&mut self) {
+        if self.split_view && self.active_pane == Pane::Right {
+            let parent_tasks = self.get_current_tasks();
+            if !parent_tasks.is_empty() && self.selected_index < parent_tasks.len() {
+                let selected_task_id = &parent_tasks[self.selected_index].id;
+                let subtasks = self.get_filtered_subtasks(selected_task_id);
+                if !subtasks.is_empty() && self.right_pane_selected_index < subtasks.len() {
+                    let task_id = subtasks[self.right_pane_selected_index].id.clone();
+                    if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.important = !task.important;
+                    }
+                    let _ = save_tasks(&self.tasks, &self.tasks_path);
+                }
+            }
+        } else {
+            let current_tasks = self.get_current_tasks();
+            if !current_tasks.is_empty() && self.selected_index < current_tasks.len() {
+                let task_id = current_tasks[self.selected_index].id.clone();
+                if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                    task.important = !task.important;
+                }
+                let _ = save_tasks(&self.tasks, &self.tasks_path);
+            }
+        }
+    }
+
     fn move_up(&mut self) {
         if self.split_view && self.active_pane == Pane::Right {
             if self.right_pane_selected_index > 0 {
@@ -489,7 +523,7 @@ fn get_empty_view_color(is_active: bool, colors: &ColorScheme) -> Color {
     }
 }
 
-fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, Settings)> {
+fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, PathBuf, Settings)> {
     let home_dir = dirs::home_dir()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
     
@@ -497,6 +531,7 @@ fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, Settings)> {
     let terdo_dir = config_dir.join("terdo");
     let settings_path = terdo_dir.join("setting.toml");
     let tasks_path = terdo_dir.join("tasks.csv");
+    let manual_path = terdo_dir.join("manual.md");
     
     // .config ディレクトリを作成
     if !config_dir.exists() {
@@ -532,7 +567,13 @@ fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, Settings)> {
         fs::write(&tasks_path, "")?;
     }
     
-    Ok((tasks_path, settings_path, settings))
+    // manual.md を作成（存在しない場合）
+    if !manual_path.exists() {
+        let default_manual = include_str!("../manual.md");
+        fs::write(&manual_path, default_manual)?;
+    }
+    
+    Ok((tasks_path, settings_path, manual_path, settings))
 }
 
 fn load_tasks(path: &PathBuf) -> io::Result<Vec<Task>> {
@@ -567,6 +608,46 @@ fn save_settings(settings: &Settings, path: &PathBuf) -> io::Result<()> {
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(path, toml_string)?;
     Ok(())
+}
+
+fn load_manual(path: &PathBuf) -> io::Result<Vec<String>> {
+    // 外部ファイルが存在する場合はそちらを読み込む
+    let content = if path.exists() {
+        fs::read_to_string(path)?
+    } else {
+        // 存在しない場合はデフォルトのマニュアルを使用
+        include_str!("../manual.md").to_string()
+    };
+    
+    // Markdownをパースして表示用の行に変換
+    let mut lines = Vec::new();
+    lines.push("".to_string()); // 空行
+    
+    for line in content.lines() {
+        let trimmed = line.trim();
+        
+        if trimmed.starts_with("# ") {
+            // H1: タイトル
+            lines.push(trimmed[2..].to_string());
+        } else if trimmed.starts_with("## ") {
+            // H2: セクションタイトル
+            lines.push("".to_string());
+            lines.push(trimmed[3..].to_string());
+        } else if trimmed.starts_with("- **") {
+            // リスト項目: "- **キー** - 説明" 形式
+            // Markdownの太字マーカーを除去して表示
+            let processed = trimmed[2..]
+                .replace("**", "")
+                .replace(" - ", " - ");
+            lines.push(format!("  {}", processed));
+        } else if !trimmed.is_empty() {
+            // その他の行
+            lines.push(trimmed.to_string());
+        }
+    }
+    
+    lines.push("".to_string()); // 末尾の空行
+    Ok(lines)
 }
 
 fn main() -> io::Result<()> {
@@ -859,6 +940,9 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         KeyCode::Char(' ') => {
             app.toggle_complete();
         }
+        KeyCode::Char('!') => {
+            app.toggle_important();
+        }
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
             app.enter_subtask();
         }
@@ -1026,6 +1110,7 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
             let selected = i == app.selected_index;
             let prefix = if selected { "> " } else { "  " };
             let status = if task.completed { "[x]" } else { "[ ]" };
+            let important_mark = if task.important { "!" } else { " " };
             let has_subtasks = !app.get_subtasks(&task.id).is_empty();
             let subtask_indicator = if has_subtasks && !app.split_view { " +" } else { "" };
             
@@ -1035,7 +1120,7 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                 !task.completed && 
                 app.has_completed_subtasks(&task.id);
             
-            let display = format!("{}{} {}{}", prefix, status, task.title, subtask_indicator);
+            let display = format!("{}{}{}{}{}", prefix, status, important_mark, task.title, subtask_indicator);
             
             // 折り返し処理
             let max_width = if app.split_view { 
@@ -1072,34 +1157,95 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                     } else {
                         " ".repeat((width as usize).saturating_sub(display_text.width()))
                     };
-                    queue!(stdout, 
-                        SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
-                        SetForegroundColor(colors.selected_fg.to_crossterm_color()),
-                        Print(format!("{}{}", display_text, padding)),
-                        ResetColor
-                    )?;
+                    
+                    // 重要度マークの位置を特定して色分け表示
+                    if is_first_line && task.important {
+                        let prefix_status = format!("{}{}", prefix, status);
+                        let rest = format!("{}{}", task.title, subtask_indicator);
+                        queue!(stdout, 
+                            SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                            Print(&prefix_status),
+                            SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                            Print("!"),
+                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", rest, padding)),
+                            ResetColor
+                        )?;
+                    } else {
+                        queue!(stdout, 
+                            SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", display_text, padding)),
+                            ResetColor
+                        )?;
+                    }
                 } else if selected && is_split_and_active_right {
                     let padding = " ".repeat(max_width.saturating_sub(display_text.width()));
-                    queue!(stdout, 
-                        SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
-                        SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
-                        Print(format!("{}{}", display_text, padding)),
-                        ResetColor
-                    )?;
+                    
+                    if is_first_line && task.important {
+                        let prefix_status = format!("{}{}", prefix, status);
+                        let rest = format!("{}{}", task.title, subtask_indicator);
+                        queue!(stdout, 
+                            SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
+                            Print(&prefix_status),
+                            SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                            Print("!"),
+                            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", rest, padding)),
+                            ResetColor
+                        )?;
+                    } else {
+                        queue!(stdout, 
+                            SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
+                            SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
+                            Print(format!("{}{}", display_text, padding)),
+                            ResetColor
+                        )?;
+                    }
                 } else if is_parent_with_completed_subtasks {
                     // 完了済みサブタスクを持つ未完了の親タスクはグレー
-                    queue!(stdout, 
-                        SetForegroundColor(Color::DarkGrey),
-                        Print(&display_text),
-                        ResetColor
-                    )?;
+                    if is_first_line && task.important {
+                        let prefix_status = format!("{}{}", prefix, status);
+                        let rest = format!("{}{}", task.title, subtask_indicator);
+                        queue!(stdout, 
+                            SetForegroundColor(Color::DarkGrey),
+                            Print(&prefix_status),
+                            SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                            Print("!"),
+                            SetForegroundColor(Color::DarkGrey),
+                            Print(&rest),
+                            ResetColor
+                        )?;
+                    } else {
+                        queue!(stdout, 
+                            SetForegroundColor(Color::DarkGrey),
+                            Print(&display_text),
+                            ResetColor
+                        )?;
+                    }
                 } else {
                     // 通常表示（白色）
-                    queue!(stdout, 
-                        SetForegroundColor(Color::White),
-                        Print(&display_text),
-                        ResetColor
-                    )?;
+                    if is_first_line && task.important {
+                        let prefix_status = format!("{}{}", prefix, status);
+                        let rest = format!("{}{}", task.title, subtask_indicator);
+                        queue!(stdout, 
+                            SetForegroundColor(Color::White),
+                            Print(&prefix_status),
+                            SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                            Print("!"),
+                            SetForegroundColor(Color::White),
+                            Print(&rest),
+                            ResetColor
+                        )?;
+                    } else {
+                        queue!(stdout, 
+                            SetForegroundColor(Color::White),
+                            Print(&display_text),
+                            ResetColor
+                        )?;
+                    }
                 }
                 
                 current_line += 1;
@@ -1133,35 +1279,8 @@ fn draw_help_full<W: Write>(app: &App, stdout: &mut W, _width: u16, height: u16)
         ResetColor
     )?;
     
-    // ヘルプ内容（プレースホルダー）
-    let help_lines = vec![
-        "",
-        "Manual: TerDO の使い方",
-        "",
-        "キー - 対応する動作",
-        "  A - all: 全てのタスクを表示",
-        "  C - completed: 完了済みタスクを表示",
-        "  D - delete: タスクの削除",
-        "  E - edit: タスクの編集",
-        "  F - find: タスクの検索（未実装）",
-        "  H, ←, BACKSPACE - back/left: 親タスクに戻る / 左ペインをアクティブ",
-        "  J, ↓ - down: タスクを下に移動",
-        "  K, ↑ - up: タスクを上に移動",
-        "  L, →, ENTER - right: サブタスクに移動 / 右ペインをアクティブ",
-        "  N - new: タスクの作成",
-        "  Q - quit: アプリケーションを終了",
-        "  R - refresh: タスクのリストを更新",
-        "  S - sort: タスクの並び替え",
-        "  T - toggle: タスクの完了状態を切り替え",
-        "  ? - manual: マニュアルを表示",
-        "  | - split: 画面分割の切り替えON/OFF",
-        "  SPACE - toggle complete: タスクの完了状態を切り替え",
-        "  ESC - close manual: マニュアルを閉じる",
-        "  Ctrl + C - copy: 選択中のタスクタイトルをクリップボードにコピー",
-        "",
-    ];
-    
-    for (i, line) in help_lines.iter().enumerate() {
+    // ロードされたマニュアルコンテンツを表示
+    for (i, line) in app.manual_content.iter().enumerate() {
         if i + 1 >= height as usize {
             break;
         }
@@ -1187,35 +1306,8 @@ fn draw_help_pane<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) 
         ResetColor
     )?;
     
-    // ヘルプ内容（プレースホルダー）
-    let help_lines = vec![
-        "",
-        "Manual: TerDO の使い方",
-        "",
-        "キー - 対応する動作",
-        "  A - 全てのタスクを表示",
-        "  C - 完了済みタスクを表示",
-        "  D - タスクの削除",
-        "  E - タスクの編集",
-        "  F - タスクの検索（未実装）",
-        "  H, ←, BACKSPACE - 親タスクに戻る",
-        "  J, ↓ - タスクを下に移動",
-        "  K, ↑ - タスクを上に移動",
-        "  L, →, ENTER - サブタスクに移動",
-        "  N - タスクの作成",
-        "  Q - アプリケーションを終了",
-        "  R - タスクのリストを更新",
-        "  S - タスクの並び替え",
-        "  T - タスクの完了状態を切り替え",
-        "  ? - マニュアルを表示",
-        "  | - 画面分割の切り替えON/OFF",
-        "  SPACE - タスクの完了状態を切り替え",
-        "  ESC - マニュアルを閉じる",
-        "  Ctrl + C - 選択中のタスクタイトルをコピー",
-        "",
-    ];
-    
-    for (i, line) in help_lines.iter().enumerate() {
+    // ロードされたマニュアルコンテンツを表示
+    for (i, line) in app.manual_content.iter().enumerate() {
         if i + 1 >= height as usize {
             break;
         }
@@ -1321,8 +1413,9 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
                 let selected = app.active_pane == Pane::Right && i == app.right_pane_selected_index;
                 let prefix = if i == app.right_pane_selected_index { "> " } else { "  " };
                 let status = if task.completed { "[x]" } else { "[ ]" };
+                let important_mark = if task.important { "!" } else { " " };
                 
-                let display = format!("{}{} {}", prefix, status, task.title);
+                let display = format!("{}{}{}{}", prefix, status, important_mark, task.title);
                 
                 // 折り返し処理
                 let max_width = right_pane_width as usize;
@@ -1350,19 +1443,49 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
                     
                     if selected {
                         let padding = " ".repeat(max_width.saturating_sub(display_text.width()));
-                        queue!(stdout,
-                            SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
-                            SetForegroundColor(colors.selected_fg.to_crossterm_color()),
-                            Print(format!("{}{}", display_text, padding)),
-                            ResetColor
-                        )?;
+                        
+                        if is_first_line && task.important {
+                            let prefix_status = format!("{}{}", prefix, status);
+                            let rest = task.title.clone();
+                            queue!(stdout,
+                                SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                                SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                                Print(&prefix_status),
+                                SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                                Print("!"),
+                                SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                                Print(format!("{}{}", rest, padding)),
+                                ResetColor
+                            )?;
+                        } else {
+                            queue!(stdout,
+                                SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
+                                SetForegroundColor(colors.selected_fg.to_crossterm_color()),
+                                Print(format!("{}{}", display_text, padding)),
+                                ResetColor
+                            )?;
+                        }
                     } else {
                         // 通常表示（白色）
-                        queue!(stdout, 
-                            SetForegroundColor(Color::White),
-                            Print(&display_text),
-                            ResetColor
-                        )?;
+                        if is_first_line && task.important {
+                            let prefix_status = format!("{}{}", prefix, status);
+                            let rest = task.title.clone();
+                            queue!(stdout, 
+                                SetForegroundColor(Color::White),
+                                Print(&prefix_status),
+                                SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
+                                Print("!"),
+                                SetForegroundColor(Color::White),
+                                Print(&rest),
+                                ResetColor
+                            )?;
+                        } else {
+                            queue!(stdout, 
+                                SetForegroundColor(Color::White),
+                                Print(&display_text),
+                                ResetColor
+                            )?;
+                        }
                     }
                     
                     current_line += 1;
@@ -1548,7 +1671,7 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             Print("Press ESC to close")
         )?;
     } else {
-        let help_text = "[?]Manual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [l]in | [h]out | [u/c/a]filter | [|]split | (q)uit";
+        let help_text = "[?]Manual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [!]important | [l]in | [h]out | [u/c/a]filter | (q)uit";
         
         // 画面幅に合わせてヘルプテキストを切り詰める
         let max_help_width = width as usize;
