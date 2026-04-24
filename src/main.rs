@@ -1,7 +1,7 @@
 use crossterm::{
     cursor, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute, queue,
-    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use serde::{Deserialize, Serialize};
@@ -117,6 +117,8 @@ struct App {
     settings: Settings,
     tasks_path: PathBuf,
     settings_path: PathBuf,
+    _manual_path: PathBuf,
+    manual_content: Vec<String>,
 }
 
 #[derive(PartialEq)]
@@ -143,10 +145,11 @@ enum Pane {
 
 impl App {
     fn new() -> io::Result<Self> {
-        let (tasks_path, settings_path, settings) = initialize_config_dir()?;
+        let (tasks_path, settings_path, manual_path, settings) = initialize_config_dir()?;
         let tasks = load_tasks(&tasks_path)?;
         let split_view = settings.split_view;
         let filter_mode = settings.filter_mode;
+        let manual_content = load_manual(&manual_path)?;
         Ok(Self {
             tasks,
             selected_index: 0,
@@ -163,6 +166,8 @@ impl App {
             settings,
             tasks_path,
             settings_path,
+            _manual_path: manual_path,
+            manual_content,
         })
     }
 
@@ -518,7 +523,7 @@ fn get_empty_view_color(is_active: bool, colors: &ColorScheme) -> Color {
     }
 }
 
-fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, Settings)> {
+fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, PathBuf, Settings)> {
     let home_dir = dirs::home_dir()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
     
@@ -526,6 +531,7 @@ fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, Settings)> {
     let terdo_dir = config_dir.join("terdo");
     let settings_path = terdo_dir.join("setting.toml");
     let tasks_path = terdo_dir.join("tasks.csv");
+    let manual_path = terdo_dir.join("manual.md");
     
     // .config ディレクトリを作成
     if !config_dir.exists() {
@@ -561,7 +567,13 @@ fn initialize_config_dir() -> io::Result<(PathBuf, PathBuf, Settings)> {
         fs::write(&tasks_path, "")?;
     }
     
-    Ok((tasks_path, settings_path, settings))
+    // manual.md を作成（存在しない場合）
+    if !manual_path.exists() {
+        let default_manual = include_str!("../manual.md");
+        fs::write(&manual_path, default_manual)?;
+    }
+    
+    Ok((tasks_path, settings_path, manual_path, settings))
 }
 
 fn load_tasks(path: &PathBuf) -> io::Result<Vec<Task>> {
@@ -596,6 +608,46 @@ fn save_settings(settings: &Settings, path: &PathBuf) -> io::Result<()> {
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(path, toml_string)?;
     Ok(())
+}
+
+fn load_manual(path: &PathBuf) -> io::Result<Vec<String>> {
+    // 外部ファイルが存在する場合はそちらを読み込む
+    let content = if path.exists() {
+        fs::read_to_string(path)?
+    } else {
+        // 存在しない場合はデフォルトのマニュアルを使用
+        include_str!("../manual.md").to_string()
+    };
+    
+    // Markdownをパースして表示用の行に変換
+    let mut lines = Vec::new();
+    lines.push("".to_string()); // 空行
+    
+    for line in content.lines() {
+        let trimmed = line.trim();
+        
+        if trimmed.starts_with("# ") {
+            // H1: タイトル
+            lines.push(trimmed[2..].to_string());
+        } else if trimmed.starts_with("## ") {
+            // H2: セクションタイトル
+            lines.push("".to_string());
+            lines.push(trimmed[3..].to_string());
+        } else if trimmed.starts_with("- **") {
+            // リスト項目: "- **キー** - 説明" 形式
+            // Markdownの太字マーカーを除去して表示
+            let processed = trimmed[2..]
+                .replace("**", "")
+                .replace(" - ", " - ");
+            lines.push(format!("  {}", processed));
+        } else if !trimmed.is_empty() {
+            // その他の行
+            lines.push(trimmed.to_string());
+        }
+    }
+    
+    lines.push("".to_string()); // 末尾の空行
+    Ok(lines)
 }
 
 fn main() -> io::Result<()> {
@@ -1114,10 +1166,8 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                             SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
                             SetForegroundColor(colors.selected_fg.to_crossterm_color()),
                             Print(&prefix_status),
-                            SetAttribute(Attribute::Bold),
                             SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
                             Print("!"),
-                            SetAttribute(Attribute::NoBold),
                             SetForegroundColor(colors.selected_fg.to_crossterm_color()),
                             Print(format!("{}{}", rest, padding)),
                             ResetColor
@@ -1140,10 +1190,8 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                             SetBackgroundColor(colors.inactive_selected_bg.to_crossterm_color()),
                             SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
                             Print(&prefix_status),
-                            SetAttribute(Attribute::Bold),
                             SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
                             Print("!"),
-                            SetAttribute(Attribute::NoBold),
                             SetForegroundColor(colors.inactive_selected_fg.to_crossterm_color()),
                             Print(format!("{}{}", rest, padding)),
                             ResetColor
@@ -1164,10 +1212,8 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                         queue!(stdout, 
                             SetForegroundColor(Color::DarkGrey),
                             Print(&prefix_status),
-                            SetAttribute(Attribute::Bold),
                             SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
                             Print("!"),
-                            SetAttribute(Attribute::NoBold),
                             SetForegroundColor(Color::DarkGrey),
                             Print(&rest),
                             ResetColor
@@ -1187,10 +1233,8 @@ fn draw_parent_tasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u1
                         queue!(stdout, 
                             SetForegroundColor(Color::White),
                             Print(&prefix_status),
-                            SetAttribute(Attribute::Bold),
                             SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
                             Print("!"),
-                            SetAttribute(Attribute::NoBold),
                             SetForegroundColor(Color::White),
                             Print(&rest),
                             ResetColor
@@ -1235,36 +1279,8 @@ fn draw_help_full<W: Write>(app: &App, stdout: &mut W, _width: u16, height: u16)
         ResetColor
     )?;
     
-    // ヘルプ内容（プレースホルダー）
-    let help_lines = vec![
-        "",
-        "Manual: TerDO の使い方",
-        "",
-        "キー - 対応する動作",
-        "  ! - important: タスクの重要度を切り替え",
-        "  A - all: 全てのタスクを表示",
-        "  C - completed: 完了済みタスクを表示",
-        "  D - delete: タスクの削除",
-        "  E - edit: タスクの編集",
-        "  F - find: タスクの検索（未実装）",
-        "  H, ←, BACKSPACE - back/left: 親タスクに戻る / 左ペインをアクティブ",
-        "  J, ↓ - down: タスクを下に移動",
-        "  K, ↑ - up: タスクを上に移動",
-        "  L, →, ENTER - right: サブタスクに移動 / 右ペインをアクティブ",
-        "  N - new: タスクの作成",
-        "  Q - quit: アプリケーションを終了",
-        "  R - refresh: タスクのリストを更新",
-        "  S - sort: タスクの並び替え",
-        "  T - toggle: タスクの完了状態を切り替え",
-        "  ? - manual: マニュアルを表示",
-        "  | - split: 画面分割の切り替えON/OFF",
-        "  SPACE - toggle complete: タスクの完了状態を切り替え",
-        "  ESC - close manual: マニュアルを閉じる",
-        "  Ctrl + C - copy: 選択中のタスクタイトルをクリップボードにコピー",
-        "",
-    ];
-    
-    for (i, line) in help_lines.iter().enumerate() {
+    // ロードされたマニュアルコンテンツを表示
+    for (i, line) in app.manual_content.iter().enumerate() {
         if i + 1 >= height as usize {
             break;
         }
@@ -1290,36 +1306,8 @@ fn draw_help_pane<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) 
         ResetColor
     )?;
     
-    // ヘルプ内容（プレースホルダー）
-    let help_lines = vec![
-        "",
-        "Manual: TerDO の使い方",
-        "",
-        "キー - 対応する動作",
-        "  ! - タスクの重要度を切り替え",
-        "  A - 全てのタスクを表示",
-        "  C - 完了済みタスクを表示",
-        "  D - タスクの削除",
-        "  E - タスクの編集",
-        "  F - タスクの検索（未実装）",
-        "  H, ←, BACKSPACE - 親タスクに戻る",
-        "  J, ↓ - タスクを下に移動",
-        "  K, ↑ - タスクを上に移動",
-        "  L, →, ENTER - サブタスクに移動",
-        "  N - タスクの作成",
-        "  Q - アプリケーションを終了",
-        "  R - タスクのリストを更新",
-        "  S - タスクの並び替え",
-        "  T - タスクの完了状態を切り替え",
-        "  ? - マニュアルを表示",
-        "  | - 画面分割の切り替えON/OFF",
-        "  SPACE - タスクの完了状態を切り替え",
-        "  ESC - マニュアルを閉じる",
-        "  Ctrl + C - 選択中のタスクタイトルをコピー",
-        "",
-    ];
-    
-    for (i, line) in help_lines.iter().enumerate() {
+    // ロードされたマニュアルコンテンツを表示
+    for (i, line) in app.manual_content.iter().enumerate() {
         if i + 1 >= height as usize {
             break;
         }
@@ -1463,10 +1451,8 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
                                 SetBackgroundColor(colors.selected_bg.to_crossterm_color()),
                                 SetForegroundColor(colors.selected_fg.to_crossterm_color()),
                                 Print(&prefix_status),
-                                SetAttribute(Attribute::Bold),
                                 SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
                                 Print("!"),
-                                SetAttribute(Attribute::NoBold),
                                 SetForegroundColor(colors.selected_fg.to_crossterm_color()),
                                 Print(format!("{}{}", rest, padding)),
                                 ResetColor
@@ -1487,10 +1473,8 @@ fn draw_subtasks<W: Write>(app: &App, stdout: &mut W, width: u16, height: u16) -
                             queue!(stdout, 
                                 SetForegroundColor(Color::White),
                                 Print(&prefix_status),
-                                SetAttribute(Attribute::Bold),
                                 SetForegroundColor(Color::Rgb { r: 255, g: 80, b: 80 }),
                                 Print("!"),
-                                SetAttribute(Attribute::NoBold),
                                 SetForegroundColor(Color::White),
                                 Print(&rest),
                                 ResetColor
