@@ -39,6 +39,7 @@ struct ColorScheme {
     filter_all_fg: RgbColor,
     filter_completed_fg: RgbColor,
     filter_unfinished_fg: RgbColor,
+    filter_important_fg: RgbColor,
     delete_fg: RgbColor,
     empty_view_fg: RgbColor,
 }
@@ -55,6 +56,7 @@ impl Default for ColorScheme {
             filter_all_fg: RgbColor { r: 173, g: 216, b: 230 },
             filter_completed_fg: RgbColor { r: 144, g: 238, b: 144 },
             filter_unfinished_fg: RgbColor { r: 255, g: 255, b: 153 },
+            filter_important_fg: RgbColor { r: 255, g: 165, b: 0 },
             delete_fg: RgbColor { r: 178, g: 34, b: 34 },
             empty_view_fg: RgbColor { r: 160, g: 240, b: 160 },
         }
@@ -135,6 +137,7 @@ enum FilterMode {
     Unfinished,
     Completed,
     All,
+    Important,
 }
 
 #[derive(PartialEq)]
@@ -182,6 +185,7 @@ impl App {
                     t.completed || (!t.completed && self.has_completed_subtasks(&t.id))
                 },
                 FilterMode::All => true,
+                FilterMode::Important => t.important,
             })
             .collect()
     }
@@ -205,6 +209,7 @@ impl App {
             FilterMode::Unfinished => !t.completed,
             FilterMode::Completed => t.completed,
             FilterMode::All => true,
+            FilterMode::Important => t.important,
         }).collect()
     }
 
@@ -510,6 +515,7 @@ impl App {
             FilterMode::Unfinished => ("unfinished", self.settings.colors.filter_unfinished_fg.to_crossterm_color()),
             FilterMode::Completed => ("completed", self.settings.colors.filter_completed_fg.to_crossterm_color()),
             FilterMode::All => ("all tasks", self.settings.colors.filter_all_fg.to_crossterm_color()),
+            FilterMode::Important => ("important", self.settings.colors.filter_important_fg.to_crossterm_color()),
         }
     }
 }
@@ -913,6 +919,16 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         KeyCode::Char('c') => {
             app.filter_mode = FilterMode::Completed;
             app.settings.filter_mode = FilterMode::Completed;
+            if app.split_view && app.active_pane == Pane::Right {
+                app.right_pane_selected_index = 0;
+            } else {
+                app.selected_index = 0;
+            }
+            let _ = save_settings(&app.settings, &app.settings_path);
+        }
+        KeyCode::Char('i') => {
+            app.filter_mode = FilterMode::Important;
+            app.settings.filter_mode = FilterMode::Important;
             if app.split_view && app.active_pane == Pane::Right {
                 app.right_pane_selected_index = 0;
             } else {
