@@ -1,4 +1,4 @@
-# TerDO -Terminal ToDO-
+# TerDO -"Ter"minal To"DO"-
 
 コマンドプロンプト（Windowsターミナル）上で動くTODOアプリケーション。
 現在，Windows11以外のことは考えずに作成しています。
@@ -30,6 +30,7 @@
 
 ## setting.tomlで設定できる項目
 
+ユーザーホームに.configが存在しなければ作成し，`terdo/setting.js`を作成します。
 ペイン分割状況，フィルター選択状況，色情報を設定できます。
 
 ```setting.toml
