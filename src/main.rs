@@ -12,6 +12,21 @@ use uuid::Uuid;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use arboard::Clipboard;
 
+#[cfg(windows)]
+use windows_sys::Win32::{
+    System::Console::GetConsoleWindow,
+    UI::{
+        Input::{
+            Ime::{ImmGetContext, ImmGetOpenStatus, ImmReleaseContext, ImmSetOpenStatus},
+            KeyboardAndMouse::{
+                INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+                VK_IME_OFF,
+            },
+        },
+        WindowsAndMessaging::GetForegroundWindow,
+    },
+};
+
 const TASKS_TITLE: &str = "TODO List";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,6 +283,7 @@ impl App {
         self.input_buffer.clear();
         self.cursor_position = 0;
         self.input_mode = InputMode::Normal;
+        switch_to_ascii_input_mode();
     }
 
     fn edit_task(&mut self) {
@@ -283,6 +299,7 @@ impl App {
         self.cursor_position = 0;
         self.editing_task_id = None;
         self.input_mode = InputMode::Normal;
+        switch_to_ascii_input_mode();
     }
 
     fn start_editing(&mut self) {
@@ -520,6 +537,75 @@ impl App {
     }
 }
 
+#[cfg(windows)]
+fn switch_to_ascii_input_mode() {
+    fn close_ime_for_window(hwnd: *mut core::ffi::c_void) -> bool {
+        if hwnd.is_null() {
+            return false;
+        }
+
+        unsafe {
+            let himc = ImmGetContext(hwnd);
+            if himc.is_null() {
+                return false;
+            }
+
+            let was_open = ImmGetOpenStatus(himc) != 0;
+            let close_ok = ImmSetOpenStatus(himc, 0) != 0;
+            ImmReleaseContext(hwnd, himc);
+
+            // すでにOFFだった場合も成功とみなす
+            !was_open || close_ok
+        }
+    }
+
+    let foreground_closed = close_ime_for_window(unsafe { GetForegroundWindow() });
+    let console_closed = close_ime_for_window(unsafe { GetConsoleWindow() });
+
+    if foreground_closed || console_closed {
+        return;
+    }
+
+    // IMM経由で制御できない端末向けフォールバック
+    unsafe {
+        let mut inputs = [
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_IME_OFF,
+                        wScan: 0,
+                        dwFlags: 0,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_IME_OFF,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+        ];
+
+        let _ = SendInput(
+            inputs.len() as u32,
+            inputs.as_mut_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn switch_to_ascii_input_mode() {}
+
 // 空のビュー表示用の色を取得
 fn get_empty_view_color(is_active: bool, colors: &ColorScheme) -> Color {
     if is_active {
@@ -731,11 +817,15 @@ fn handle_input_mode(app: &mut App, key: KeyEvent) {
             if app.input_mode == InputMode::Help {
                 app.input_mode = InputMode::Normal;
             } else {
+                let should_switch_ime = app.input_mode == InputMode::Adding || app.input_mode == InputMode::Editing;
                 app.input_buffer.clear();
                 app.cursor_position = 0;
                 app.editing_task_id = None;
                 app.deleting_task_id = None;
                 app.input_mode = InputMode::Normal;
+                if should_switch_ime {
+                    switch_to_ascii_input_mode();
+                }
             }
         }
         KeyCode::Char('m') => {
@@ -1687,7 +1777,7 @@ fn draw_bottom_area<W: Write>(app: &App, stdout: &mut W, height: u16) -> io::Res
             Print("Press ESC to close")
         )?;
     } else {
-        let help_text = "[?]Manual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [!]important | [l]in | [h]out | [u/c/a]filter | (q)uit";
+        let help_text = "[?]Manual | (n)ew | [k]prev | [j]next | (e)dit | (d)el | [ ]finish! | [!]important | [l]in | [h]out | [u/c/a/i]filter | (q)uit";
         
         // 画面幅に合わせてヘルプテキストを切り詰める
         let max_help_width = width as usize;
