@@ -16,21 +16,26 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # v3からv4へアップデート推奨
 
       - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable # actions-rs はメンテナンスが止まっているためこちらが主流
 
       - name: Build
         run: cargo build --release
 
+      # 1. zip化するステップを追加
+      - name: Archive Release
+        shell: pwsh
+        run: |
+          # 実行ファイル名をプロジェクト名に合わせて適宜変更してください
+          Compress-Archive -Path target/release/*.exe -DestinationPath release-windows.zip
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2 # v1からv2へアップデート推奨
         with:
           tag_name: auto-${{ github.run_number }}
           name: Auto Build ${{ github.run_number }}
-          files: target/release/*.exe
+          files: terdo-windows.zip # zipファイルを指定
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
